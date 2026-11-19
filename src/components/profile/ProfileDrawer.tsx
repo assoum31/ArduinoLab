@@ -3,6 +3,7 @@ import {
   GraduationCap,
   LogIn,
   LogOut,
+  Palette,
   Trash2,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
@@ -35,6 +36,8 @@ export function ProfileDrawer() {
     deleteCircuitProject,
     loadIntoSimulator,
     setActiveTab,
+    setSettingsOpen,
+    userSettings,
   } = useApp();
 
   const rankThresholds = [
@@ -133,6 +136,36 @@ export function ProfileDrawer() {
             {authError}
           </div>
         )}
+
+        {/* Quick Appearance & Firebase Cloud Preferences Access */}
+        <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/70 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className="w-9 h-9 rounded-xl bg-[#00878F]/15 text-[#00878F] dark:text-[#22c6cf] flex items-center justify-center shrink-0">
+              <Palette className="w-4 h-4" />
+            </span>
+            <div className="min-w-0">
+              <div className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                {tLoc(translations.settings.title, lang)}
+              </div>
+              <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400 truncate">
+                {tLoc(translations.settings.accents[userSettings.accentTheme], lang)} ·{' '}
+                {tLoc(translations.settings.fontSizes[userSettings.fontSize], lang)} ·{' '}
+                {userSettings.codeFontSize}px
+              </div>
+            </div>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              soundEngine.playSelect();
+              setProfileOpen(false);
+              setSettingsOpen(true);
+            }}
+          >
+            {tLoc(translations.settings.buttonLabel, lang)}
+          </Button>
+        </div>
 
         {/* XP Progress & Summary Metrics */}
         <div className="space-y-3">

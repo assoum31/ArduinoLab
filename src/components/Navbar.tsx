@@ -10,6 +10,8 @@ import {
   Medal,
   Monitor,
   Moon,
+  Palette,
+  Settings,
   Shield,
   SlidersHorizontal,
   Sun,
@@ -41,6 +43,8 @@ export function Navbar() {
     activeTab,
     setActiveTab,
     setProfileOpen,
+    settingsOpen,
+    setSettingsOpen,
     profile,
     firebaseUser,
     isAdmin,
@@ -245,41 +249,7 @@ export function Navbar() {
               {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
             </button>
 
-            {/* Desktop Theme Switcher (Light / Dark / System) */}
-            <div
-              role="group"
-              aria-label={tLoc(translations.nav.themeLabel, lang)}
-              className="hidden md:flex items-center rounded-lg border border-slate-200 dark:border-slate-800 p-0.5 bg-slate-100 dark:bg-slate-900"
-            >
-              {themeOptions.map((option) => {
-                const Icon = option.icon;
-                const isSelected = themePreference === option.id;
-                return (
-                  <button
-                    key={option.id}
-                    type="button"
-                    onClick={() => setThemePreference(option.id)}
-                    aria-label={option.title}
-                    aria-pressed={isSelected}
-                    title={option.title}
-                    className={cn(
-                      'flex items-center justify-center p-1.5 rounded-md transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00878F]',
-                      isSelected
-                        ? option.id === 'light'
-                          ? 'bg-white text-amber-500 shadow-xs'
-                          : option.id === 'dark'
-                            ? 'bg-slate-800 text-[#22c6cf] shadow-xs'
-                            : 'bg-white dark:bg-slate-800 text-[#00878F] dark:text-[#22c6cf] shadow-xs'
-                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200',
-                    )}
-                  >
-                    <Icon className="w-3.5 h-3.5 shrink-0" />
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Mobile Quick Theme Toggle (40px+ touch target) */}
+            {/* Dedicated Light / Dark Theme Toggle Button (persisted in localStorage) */}
             <button
               type="button"
               onClick={toggleTheme}
@@ -289,13 +259,49 @@ export function Navbar() {
                   : tLoc(translations.nav.switchToDark, lang)
               }
               aria-pressed={theme === 'dark'}
-              className="md:hidden min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900 text-slate-700 dark:text-slate-200 active:scale-95 transition-transform cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00878F]"
+              title={
+                theme === 'dark'
+                  ? tLoc(translations.nav.switchToLight, lang)
+                  : tLoc(translations.nav.switchToDark, lang)
+              }
+              className={cn(
+                'inline-flex items-center justify-center gap-1.5 min-h-[40px] min-w-[40px] md:min-h-0 md:min-w-0 md:px-2.5 md:py-1.5 rounded-xl md:rounded-lg border text-xs font-semibold whitespace-nowrap shrink-0 transition-colors active:scale-95 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00878F]',
+                theme === 'dark'
+                  ? 'border-slate-700 bg-slate-900 text-slate-100 hover:bg-slate-800 hover:border-[#22c6cf]/60'
+                  : 'border-slate-200 bg-slate-100 text-slate-800 hover:bg-white hover:border-[#00878F]/60',
+              )}
             >
               {theme === 'dark' ? (
-                <Sun className="w-4 h-4 text-amber-400" />
+                <Moon className="w-4 h-4 md:w-3.5 md:h-3.5 text-[#22c6cf] shrink-0" />
               ) : (
-                <Moon className="w-4 h-4 text-[#00878F]" />
+                <Sun className="w-4 h-4 md:w-3.5 md:h-3.5 text-amber-500 shrink-0" />
               )}
+              <span className="hidden lg:inline">
+                {theme === 'dark'
+                  ? tLoc(translations.nav.themeDark, lang)
+                  : tLoc(translations.nav.themeLight, lang)}
+              </span>
+            </button>
+
+            {/* Desktop Appearance & Firebase Cloud Settings Button */}
+            <button
+              type="button"
+              onClick={() => {
+                soundEngine.playSelect();
+                setSettingsOpen(true);
+              }}
+              aria-label={tLoc(translations.settings.title, lang)}
+              aria-haspopup="dialog"
+              aria-expanded={settingsOpen}
+              title={tLoc(translations.settings.title, lang)}
+              className={cn(
+                'hidden md:inline-flex p-2 rounded-lg transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00878F]',
+                settingsOpen
+                  ? 'bg-[#00878F]/15 text-[#00878F] dark:bg-[#22c6cf]/20 dark:text-[#22c6cf]'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800',
+              )}
+            >
+              <Settings className="w-4 h-4" />
             </button>
 
             {/* Profile & XP Button */}
@@ -369,6 +375,22 @@ export function Navbar() {
               <span className="flex items-center gap-3 text-sm font-semibold">
                 <Medal className="w-5 h-5 text-amber-500" />
                 <span>{tLoc(translations.nav.leaderboard, lang)}</span>
+              </span>
+              <ChevronRight className="w-4 h-4 opacity-60 rtl:rotate-180" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                soundEngine.playSelect();
+                setMobileMenuOpen(false);
+                setSettingsOpen(true);
+              }}
+              className="w-full min-h-[52px] flex items-center justify-between gap-3 px-4 py-3 rounded-2xl border border-[#00878F]/35 bg-[#00878F]/10 text-slate-900 dark:text-slate-100 transition-colors cursor-pointer"
+            >
+              <span className="flex items-center gap-3 text-sm font-semibold">
+                <Palette className="w-5 h-5 text-[#00878F]" />
+                <span>{tLoc(translations.settings.title, lang)}</span>
               </span>
               <ChevronRight className="w-4 h-4 opacity-60 rtl:rotate-180" />
             </button>

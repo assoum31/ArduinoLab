@@ -62,6 +62,9 @@ function getComponentBodyRect(comp: PlacedComponent): ObstacleRect {
   if (kind === 'temp-sensor') {
     return { x1: comp.x - 17, y1: comp.y - 16, x2: comp.x + 17, y2: comp.y + 15, penalty: 60 };
   }
+  if (kind === 'multimeter') {
+    return { x1: comp.x - 38, y1: comp.y - 38, x2: comp.x + 38, y2: comp.y + 24, penalty: 75 };
+  }
   // LEDs
   return { x1: comp.x - 18, y1: comp.y - 24, x2: comp.x + 18, y2: comp.y + 14, penalty: 60 };
 }
@@ -154,7 +157,7 @@ class MinHeap {
 /**
  * Remove redundant collinear points and tiny micro-jogs for crisp PCB traces.
  */
-function simplifyOrthogonalPoints(raw: WirePoint[]): WirePoint[] {
+export function simplifyOrthogonalPoints(raw: WirePoint[]): WirePoint[] {
   if (raw.length <= 2) return raw;
   const dedup: WirePoint[] = [raw[0]];
   for (let i = 1; i < raw.length; i++) {

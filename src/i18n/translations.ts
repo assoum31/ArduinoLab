@@ -164,6 +164,26 @@ export const translations = {
       en: 'Click pins to wire · Scroll wheel to Zoom · Drag background to Pan',
       fr: 'Cliquez sur 2 broches pour câbler · Molette pour Zoomer · Glissez le fond pour déplacer',
     },
+    wiringTool: {
+      ar: 'أداة التوصيل',
+      en: 'Wiring Tool',
+      fr: 'Outil Câblage',
+    },
+    wiringToolTooltip: {
+      ar: 'ارسم مسارات الأسلاك بين نقاط لوحة التجارب بالسحب والإفلات مع المحاذاة التلقائية للشبكة (W)',
+      en: 'Draw snapped-to-grid wire paths between breadboard points using click-and-drag (W)',
+      fr: 'Tracez des fils alignés sur la grille entre les points de la plaque par glisser-déposer (W)',
+    },
+    wiringToolActiveHint: {
+      ar: 'أداة التوصيل نشطة: اسحب من أي منفذ أو ثقب على لوحة التجارب لرسم مسار سلك بمحاذاة الشبكة · Esc للإلغاء',
+      en: 'Wiring Tool active: Click and drag from any pin or breadboard point to draw a grid-snapped path · Esc to cancel',
+      fr: 'Outil Câblage actif : cliquez-glissez depuis une broche ou un point de la plaque pour tracer un fil magnétique · Échap pour annuler',
+    },
+    wiringToolCancel: {
+      ar: 'إلغاء المسار',
+      en: 'Cancel Wire',
+      fr: 'Annuler fil',
+    },
     zoomIn: { ar: 'تكبير', en: 'Zoom In', fr: 'Zoom +' },
     zoomOut: { ar: 'تصغير', en: 'Zoom Out', fr: 'Zoom -' },
     resetZoom: { ar: 'إعادة ضبط التكبير', en: 'Reset View', fr: 'Réinitialiser vue' },
@@ -202,14 +222,59 @@ export const translations = {
     togglePalette: { ar: 'المكونات', en: 'Parts', fr: 'Composants' },
     componentExplorer: { ar: 'مستكشف المكونات', en: 'Component Explorer', fr: 'Explorateur Composants' },
     searchPartsPlaceholder: {
-      ar: 'ابحث عن قطعة أو رقمها (مثل HC-SR04, LED)...',
-      en: 'Search parts or codes (e.g. HC-SR04, LED)...',
-      fr: 'Rechercher un composant (ex. HC-SR04, LED)...',
+      ar: 'ابحث بالاسم أو الفئة (مثل LED، حساسات، مقاومات)...',
+      en: 'Search by name or category (e.g. LED, Sensors, 220Ω)...',
+      fr: 'Rechercher par nom ou catégorie (ex. LED, Capteurs)...',
+    },
+    clearSearch: {
+      ar: 'مسح البحث',
+      en: 'Clear search',
+      fr: 'Effacer la recherche',
+    },
+    showInAllCategories: {
+      ar: 'عرض النتائج في جميع الفئات',
+      en: 'Show matches in all categories',
+      fr: 'Afficher dans toutes les catégories',
     },
     datasheetHoverHint: {
       ar: 'مرّر المؤشر على أي قطعة لعرض ورقة البيانات والمواصفات',
       en: 'Hover over any part to view its datasheet & specs',
       fr: 'Survolez un composant pour voir sa fiche technique',
+    },
+    dragDropHint: {
+      ar: 'اسحب أي قطعة وأفلتها على لوحة التجارب أو انقر +',
+      en: 'Drag & drop any part onto the breadboard, or click +',
+      fr: 'Glissez-déposez un composant sur la plaque ou cliquez +',
+    },
+    dropOnBreadboard: {
+      ar: 'أفلت المكون هنا على لوحة التجارب',
+      en: 'Drop component onto breadboard',
+      fr: 'Déposez le composant ici',
+    },
+    dragPartTooltip: {
+      ar: 'اسحب إلى لوحة التجارب',
+      en: 'Drag onto breadboard',
+      fr: 'Glisser vers la plaque',
+    },
+    smartTooltips: {
+      ar: 'التلميحات الذكية (T)',
+      en: 'Smart Tooltips (T)',
+      fr: 'Infobulles intelligentes (T)',
+    },
+    circuitRole: {
+      ar: 'الدور في هذه الدائرة',
+      en: 'Role in This Circuit',
+      fr: 'Rôle dans ce circuit',
+    },
+    liveConnections: {
+      ar: 'التوصيلات الحالية',
+      en: 'Active Connections',
+      fr: 'Connexions actives',
+    },
+    unwiredPin: {
+      ar: 'غير موصول',
+      en: 'Unwired',
+      fr: 'Non câblé',
     },
     viewDatasheet: { ar: 'ورقة البيانات والمواصفات', en: 'Datasheet & Specs', fr: 'Fiche technique' },
     addToBoard: { ar: 'إضافة إلى لوحة التجارب', en: 'Add to Breadboard', fr: 'Ajouter à la plaque' },
@@ -244,6 +309,81 @@ export const translations = {
       ar: 'حرّك منزلقات الحساسات (Pot / LDR / TMP36) أو وصّل أي إشارة بمنافذ A0–A5 لرؤية تغيّر الجهد لحظياً',
       en: 'Adjust sensor sliders (Pot / LDR / TMP36) or wire signals to A0–A5 to inspect live voltage waveforms',
       fr: 'Ajustez les capteurs (Pot / LDR / TMP36) ou reliez un signal sur A0–A5 pour observer la tension',
+    },
+    currentFlowToggle: {
+      ar: 'اتجاه التيار الكهربائي (C)',
+      en: 'Current Flow Animation (C)',
+      fr: 'Flux du courant (C)',
+    },
+    currentFlowTitle: {
+      ar: 'مرور التيار',
+      en: 'Current Flow',
+      fr: 'Courant',
+    },
+    currentConventional: {
+      ar: 'اصطلاحي (+ → −)',
+      en: 'Conventional (+ → −)',
+      fr: 'Conventionnel (+ → −)',
+    },
+    currentElectrons: {
+      ar: 'إلكترونات (− → +)',
+      en: 'Electrons (− → +)',
+      fr: 'Électrons (− → +)',
+    },
+    currentLegendPower: {
+      ar: 'طاقة',
+      en: 'Power',
+      fr: 'Puissance',
+    },
+    currentLegendSignal: {
+      ar: 'إشارة',
+      en: 'Signal',
+      fr: 'Signal',
+    },
+    currentLegendOverload: {
+      ar: 'تيار زائد',
+      en: 'Surge',
+      fr: 'Surcharge',
+    },
+    currentIdleNote: {
+      ar: 'لا يوجد مسار مغلق نشط حالياً',
+      en: 'No active closed loop yet',
+      fr: 'Aucune boucle fermée active',
+    },
+    multimeterVoltage: {
+      ar: 'الجهد (V)',
+      en: 'Voltage (V)',
+      fr: 'Tension (V)',
+    },
+    multimeterCurrent: {
+      ar: 'التيار (mA)',
+      en: 'Current (mA)',
+      fr: 'Courant (mA)',
+    },
+    multimeterResistance: {
+      ar: 'المقاومة (Ω)',
+      en: 'Resistance (Ω)',
+      fr: 'Résistance (Ω)',
+    },
+    multimeterProbesHint: {
+      ar: 'وصّل المجس الأحمر (VΩ+) والأسود (COM) بنقطتين للقياس',
+      en: 'Wire Red (VΩ+) and Black (COM) probes across two points to measure',
+      fr: 'Reliez les sondes Rouge (VΩ+) et Noire (COM) à deux points pour mesurer',
+    },
+    multimeterLiveWarn: {
+      ar: 'دائرة مغذاة! أوقف المحاكاة لقياس المقاومة (Ω) بدقة',
+      en: 'Live voltage detected — stop simulation before measuring Ω',
+      fr: 'Circuit sous tension — arrêtez la simulation pour mesurer Ω',
+    },
+    multimeterFuseWarn: {
+      ar: 'تجاوز 400mA! وصّل الأميتر على التوالي مع حمل أو بدّل للجهد (V)',
+      en: 'Over 400 mA fuse limit! Wire ammeter in series with a load or switch to V',
+      fr: 'Fusible 400 mA dépassé ! Branchez en série avec une charge ou passez en V',
+    },
+    multimeterIdleHint: {
+      ar: 'شغّل المحاكاة لقراءة الجهد أو التيار المباشر',
+      en: 'Start simulation to read live voltage or current',
+      fr: 'Démarrez la simulation pour lire la tension ou le courant',
     },
   },
   lessons: {
@@ -603,6 +743,177 @@ export const translations = {
     },
     updateNow: { ar: 'تحديث', en: 'Update', fr: 'Mettre à jour' },
   },
+  settings: {
+    title: {
+      ar: 'إعدادات المظهر والمزامنة السحابية',
+      en: 'Preferences & Cloud Sync',
+      fr: 'Préférences & Synchro Cloud',
+    },
+    buttonLabel: {
+      ar: 'الإعدادات',
+      en: 'Settings',
+      fr: 'Réglages',
+    },
+    appearanceMode: {
+      ar: 'نمط العرض (فاتح / داكن)',
+      en: 'Appearance Mode',
+      fr: 'Mode d’affichage',
+    },
+    accentPalette: {
+      ar: 'ثيم الألوان المفضل',
+      en: 'Preferred Color Theme',
+      fr: 'Thème de couleurs préféré',
+    },
+    accents: {
+      teal: { ar: 'أردوينو فيروزي', en: 'Arduino Teal', fr: 'Turquoise' },
+      emerald: { ar: 'زمردي مخبري', en: 'Emerald Lab', fr: 'Émeraude' },
+      indigo: { ar: 'نيلي إلكتروني', en: 'Circuit Indigo', fr: 'Indigo' },
+      amber: { ar: 'عنبر فولت', en: 'Volt Amber', fr: 'Ambre' },
+      rose: { ar: 'إشارة قرمزية', en: 'Signal Rose', fr: 'Corail' },
+    },
+    fontSize: {
+      ar: 'حجم خط الواجهة',
+      en: 'Interface Font Size',
+      fr: 'Taille de police',
+    },
+    fontSizes: {
+      sm: { ar: 'صغير', en: 'Small', fr: 'Petit' },
+      md: { ar: 'قياسي', en: 'Default', fr: 'Normal' },
+      lg: { ar: 'كبير', en: 'Large', fr: 'Grand' },
+      xl: { ar: 'كبير جداً', en: 'Extra Large', fr: 'Très grand' },
+    },
+    fontPreview: {
+      ar: 'معاينة النص: تعلّم برمجة الأردوينو وبناء الدوائر بوضوح تام على كل أجهزتك.',
+      en: 'Live preview: Build Arduino circuits and study lessons comfortably across all devices.',
+      fr: 'Aperçu : Construisez des circuits Arduino et étudiez confortablement sur tous vos appareils.',
+    },
+    codeFontSize: {
+      ar: 'حجم خط محرر الأكواد (C++)',
+      en: 'Code Editor Font Size',
+      fr: 'Taille police éditeur C++',
+    },
+    comfortTitle: {
+      ar: 'الصوت والراحة البصرية',
+      en: 'Audio & Visual Comfort',
+      fr: 'Audio & Confort visuel',
+    },
+    soundEffects: {
+      ar: 'المؤثرات الصوتية التفاعلية',
+      en: 'Interactive Sound Effects',
+      fr: 'Effets sonores interactifs',
+    },
+    reducedMotion: {
+      ar: 'تقليل الحركات والانتقالات',
+      en: 'Reduce Motion & Animations',
+      fr: 'Réduire les animations',
+    },
+    firebaseSectionTitle: {
+      ar: 'الحفظ والتصدير إلى قاعدة بيانات Firebase',
+      en: 'Save & Export to Firebase Cloud',
+      fr: 'Sauvegarde & Export Firebase',
+    },
+    firebaseSectionDesc: {
+      ar: 'تتم مزامنة ثيم الألوان وحجم الخط واللغة تلقائياً عبر جميع أجهزتك المرتبطة بحسابك.',
+      en: 'Your color theme, font size, and language stay automatically synchronized across all signed-in devices.',
+      fr: 'Votre thème, taille de police et langue restent synchronisés automatiquement sur tous vos appareils.',
+    },
+    statusSynced: {
+      ar: 'متزامن مع Firebase',
+      en: 'Synced to Firebase',
+      fr: 'Synchronisé Firebase',
+    },
+    statusSyncing: {
+      ar: 'جاري الحفظ في Firebase...',
+      en: 'Syncing to Firebase...',
+      fr: 'Synchronisation...',
+    },
+    statusGuest: {
+      ar: 'محفوظ محلياً — سجّل الدخول للمزامنة عبر الأجهزة',
+      en: 'Saved locally — sign in to sync across devices',
+      fr: 'Local — connectez-vous pour synchroniser',
+    },
+    statusError: {
+      ar: 'تعذّر الاتصال بـ Firebase حالياً',
+      en: 'Firebase sync error',
+      fr: 'Erreur de synchro Firebase',
+    },
+    saveToFirebaseBtn: {
+      ar: 'حفظ في Firebase الآن',
+      en: 'Save to Firebase Now',
+      fr: 'Enregistrer sur Firebase',
+    },
+    savedSuccess: {
+      ar: 'تم الحفظ في Firebase بنجاح!',
+      en: 'Saved to Firebase!',
+      fr: 'Enregistré sur Firebase !',
+    },
+    exportSnapshotTitle: {
+      ar: 'تصدير نسخة إعدادات محفوظة إلى Firebase',
+      en: 'Export Named Preset to Firebase',
+      fr: 'Exporter un profil sur Firebase',
+    },
+    exportSnapshotPlaceholder: {
+      ar: 'مثال: وضع الدراسة الليلية أو شاشة العرض...',
+      en: 'e.g. Night Study, Classroom Projector...',
+      fr: 'ex. Étude nocturne, Projecteur...',
+    },
+    exportSnapshotBtn: {
+      ar: 'تصدير إلى Firebase',
+      en: 'Export to Firebase',
+      fr: 'Exporter Firebase',
+    },
+    savedSnapshotsList: {
+      ar: 'النسخ المصدّرة في Firebase',
+      en: 'Firebase Exported Presets',
+      fr: 'Profils exportés Firebase',
+    },
+    noSnapshotsYet: {
+      ar: 'لا توجد نسخ إعدادات مصدّرة بعد في حسابك.',
+      en: 'No cloud presets exported yet.',
+      fr: 'Aucun profil exporté pour le moment.',
+    },
+    applyPreset: {
+      ar: 'تطبيق',
+      en: 'Apply',
+      fr: 'Appliquer',
+    },
+    exportJsonBtn: {
+      ar: 'تصدير ملف JSON',
+      en: 'Export JSON',
+      fr: 'Exporter JSON',
+    },
+    importJsonBtn: {
+      ar: 'استيراد JSON',
+      en: 'Import JSON',
+      fr: 'Importer JSON',
+    },
+    importSuccess: {
+      ar: 'تم استيراد الإعدادات وتطبيقها!',
+      en: 'Settings imported and applied!',
+      fr: 'Réglages importés et appliqués !',
+    },
+    importError: {
+      ar: 'ملف الإعدادات غير صالح (يرجى اختيار ملف JSON صحيح).',
+      en: 'Invalid settings file. Please select a valid JSON export.',
+      fr: 'Fichier invalide. Sélectionnez un export JSON valide.',
+    },
+    resetDefaults: {
+      ar: 'استعادة الافتراضي',
+      en: 'Reset Defaults',
+      fr: 'Réinitialiser',
+    },
+    lastSynced: {
+      ar: 'آخر مزامنة:',
+      en: 'Last synced:',
+      fr: 'Dernière synchro :',
+    },
+    signInPrompt: {
+      ar: 'سجّل الدخول بحساب Google لحفظ إعداداتك ومزامنتها تلقائياً عبر الهاتف والحاسوب.',
+      en: 'Sign in with Google to save your preferences to Firebase and keep them synced across phone & desktop.',
+      fr: 'Connectez-vous avec Google pour synchroniser vos réglages sur mobile et ordinateur via Firebase.',
+    },
+  },
 };
+
 
 

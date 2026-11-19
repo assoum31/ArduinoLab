@@ -71,6 +71,10 @@ export const COMPONENT_PINS: Record<ComponentKind, ComponentPinDef[]> = {
     { id: 'sig', label: 'OUT', dx: 0, dy: 24, role: 'signal' },
     { id: 'gnd', label: 'GND', dx: 16, dy: 24, role: 'gnd' },
   ],
+  multimeter: [
+    { id: 'pos', label: 'VΩ+', dx: -16, dy: 30, role: 'vcc' },
+    { id: 'neg', label: 'COM', dx: 16, dy: 30, role: 'gnd' },
+  ],
 };
 
 export function isLedKind(kind: ComponentKind): boolean {
@@ -179,6 +183,13 @@ export function analyzeCircuit(
     union(normalizeNode(w.from), normalizeNode(w.to));
   }
 
+  // Series Ammeter mode (value === 1): low-impedance current shunt conducts seamlessly in series
+  for (const comp of circuit.components) {
+    if (comp.kind === 'multimeter' && (comp.value ?? 0) === 1) {
+      union(`comp:${comp.id}:pos`, `comp:${comp.id}:neg`);
+    }
+  }
+
   // Build resistor-bridged graph separately for LED protection & signal tracing
   const parentWithRes = new Map<string, string>(parent);
   const findRes = (x: string): string => {
@@ -201,6 +212,11 @@ export function analyzeCircuit(
 
   for (const w of circuit.wires) {
     unionRes(normalizeNode(w.from), normalizeNode(w.to));
+  }
+  for (const comp of circuit.components) {
+    if (comp.kind === 'multimeter' && (comp.value ?? 0) === 1) {
+      unionRes(`comp:${comp.id}:pos`, `comp:${comp.id}:neg`);
+    }
   }
 
   // Build weighted adjacency list of direct nets linked by resistors for Ohm's Law series-R calculation
@@ -887,6 +903,49 @@ export function analyzeCircuit(
           message: overload.summary,
         });
       }
+    } else if (comp.kind === 'multimeter') {
+      const pos = `comp:${comp.id}:pos`;
+      const neg = `comp:${comp.id}:neg`;
+      const hasPosWire = circuit.wires.some((w) => w.from === pos || w.to === pos);
+      const hasNegWire = circuit.wires.some((w) => w.from === neg || w.to === neg);
+      const isAmmeter = (comp.value ?? 0) === 1;
+
+      let overload: ComponentOverloadInfo | null = null;
+      if (isAmmeter && hasPosWire && hasNegWire && shortedRail) {
+        // Check if this ammeter is on the shorted rail path
+        const meterNet = find(pos);
+        if (meterNet === netGND) {
+          overload = {
+            reason: 'overcurrent',
+            measuredLabel: '> 400 mA',
+            ratedMaxLabel: '400 mA fuse',
+            ratio: 5.0,
+            summary: {
+              ar: `احتراق فيوز الأميتر (${compName(comp)}): موصول بالتوازي مباشرة بين ${shortedRail} و GND!`,
+              en: `Ammeter fuse blown (${compName(comp)}): connected directly across ${shortedRail} and GND!`,
+              fr: `Fusible grillé (${compName(comp)}) : ampèremètre branché directement entre ${shortedRail} et GND !`,
+            },
+            fixHint: {
+              ar: 'لقياس التيار (mA) يجب توصيل جهاز القياس على التوالي مع الحمل (مقاومة/LED)، أو التحويل إلى وضع الجهد (V).',
+              en: 'To measure current (mA), wire the multimeter in series with a load (resistor/LED), or switch to Voltage (V) mode.',
+              fr: 'Pour mesurer le courant (mA), branchez le multimètre en série avec une charge ou passez en mode Tension (V).',
+            },
+          };
+          diagnostics.push({
+            severity: 'error',
+            code: 'OVER_CURRENT',
+            componentId: comp.id,
+            message: overload.summary,
+          });
+        }
+      }
+
+      componentPower[comp.id] = {
+        powered: hasPosWire && hasNegWire,
+        brightness: hasPosWire && hasNegWire ? 1 : 0,
+        warnNoResistor: false,
+        overload,
+      };
     }
   }
 

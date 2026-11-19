@@ -119,7 +119,7 @@ export function CodeEditor({
         )}
       </div>
 
-      <div className="relative flex-1 flex overflow-hidden font-mono text-[13px] leading-6">
+      <div className="relative flex-1 flex overflow-hidden font-mono text-[length:var(--code-font-size,13px)] leading-6">
         {/* Line Numbers Gutter */}
         <div
           ref={gutterRef}
@@ -136,7 +136,7 @@ export function CodeEditor({
           <pre
             ref={preRef}
             aria-hidden="true"
-            className="absolute inset-0 m-0 p-3 overflow-hidden whitespace-pre pointer-events-none font-mono text-[13px] leading-6"
+            className="absolute inset-0 m-0 p-3 overflow-hidden whitespace-pre pointer-events-none font-mono text-[length:var(--code-font-size,13px)] leading-6"
             dangerouslySetInnerHTML={{ __html: highlighted }}
           />
           <textarea
@@ -148,7 +148,7 @@ export function CodeEditor({
             onChange={(e) => onChange(e.target.value)}
             onScroll={handleScroll}
             onKeyDown={handleKeyDown}
-            className="absolute inset-0 w-full h-full p-3 bg-transparent text-transparent caret-teal-400 resize-none focus:outline-none font-mono text-[13px] leading-6 whitespace-pre overflow-auto"
+            className="absolute inset-0 w-full h-full p-3 bg-transparent text-transparent caret-teal-400 resize-none focus:outline-none font-mono text-[length:var(--code-font-size,13px)] leading-6 whitespace-pre overflow-auto"
           />
         </div>
       </div>

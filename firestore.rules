@@ -1,0 +1,200 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ==================== Global Hardened Helpers ====================
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedOwner(userId) {
+      return isSignedIn()
+        && request.auth.token.email_verified == true
+        && request.auth.uid == userId;
+    }
+
+    function isValidThemePreference(val) {
+      return val is string && val.size() <= 16 && val in ['system', 'light', 'dark'];
+    }
+
+    function isValidAccentTheme(val) {
+      return val is string && val.size() <= 16 && val in ['teal', 'emerald', 'indigo', 'amber', 'rose'];
+    }
+
+    function isValidFontSize(val) {
+      return val is string && val.size() <= 8 && val in ['sm', 'md', 'lg', 'xl'];
+    }
+
+    function isValidCodeFontSize(val) {
+      return val is int && val >= 12 && val <= 20;
+    }
+
+    function isValidLang(val) {
+      return val is string && val.size() <= 8 && val in ['ar', 'en', 'fr'];
+    }
+
+    // ==================== Validation Blueprints ====================
+    function isValidUserSettings(data) {
+      return data.keys().hasAll([
+          'ownerId',
+          'themePreference',
+          'accentTheme',
+          'fontSize',
+          'codeFontSize',
+          'preferredLang',
+          'soundEnabled',
+          'reducedMotion',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId',
+          'themePreference',
+          'accentTheme',
+          'fontSize',
+          'codeFontSize',
+          'preferredLang',
+          'soundEnabled',
+          'reducedMotion',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidId(data.ownerId)
+        && data.ownerId == request.auth.uid
+        && isValidThemePreference(data.themePreference)
+        && isValidAccentTheme(data.accentTheme)
+        && isValidFontSize(data.fontSize)
+        && isValidCodeFontSize(data.codeFontSize)
+        && isValidLang(data.preferredLang)
+        && data.soundEnabled is bool
+        && data.reducedMotion is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSettingsSnapshot(data) {
+      return data.keys().hasAll([
+          'ownerId',
+          'label',
+          'themePreference',
+          'accentTheme',
+          'fontSize',
+          'codeFontSize',
+          'preferredLang',
+          'soundEnabled',
+          'reducedMotion',
+          'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId',
+          'label',
+          'themePreference',
+          'accentTheme',
+          'fontSize',
+          'codeFontSize',
+          'preferredLang',
+          'soundEnabled',
+          'reducedMotion',
+          'createdAt'
+        ])
+        && isValidId(data.ownerId)
+        && data.ownerId == request.auth.uid
+        && data.label is string
+        && data.label.size() >= 1
+        && data.label.size() <= 60
+        && isValidThemePreference(data.themePreference)
+        && isValidAccentTheme(data.accentTheme)
+        && isValidFontSize(data.fontSize)
+        && isValidCodeFontSize(data.codeFontSize)
+        && isValidLang(data.preferredLang)
+        && data.soundEnabled is bool
+        && data.reducedMotion is bool
+        && data.createdAt is timestamp;
+    }
+
+    function hasVerifiedSettingsParent(userId) {
+      return exists(/databases/$(database)/documents/userSettings/$(userId))
+        && get(/databases/$(database)/documents/userSettings/$(userId)).data.ownerId == request.auth.uid;
+    }
+
+    // ==================== Collection: /userSettings/{userId} ====================
+    match /userSettings/{userId} {
+      allow get: if isVerifiedOwner(userId) && isValidId(userId);
+      allow list: if false;
+
+      allow create: if isVerifiedOwner(userId)
+        && isValidId(userId)
+        && isValidUserSettings(incoming())
+        && incoming().ownerId == userId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedOwner(userId)
+        && isValidId(userId)
+        && isValidUserSettings(incoming())
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Action: Update Preferences
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'themePreference',
+            'accentTheme',
+            'fontSize',
+            'codeFontSize',
+            'preferredLang',
+            'soundEnabled',
+            'reducedMotion',
+            'updatedAt'
+          ])
+        );
+
+      allow delete: if isVerifiedOwner(userId) && isValidId(userId);
+
+      // ==================== Subcollection: /userSettings/{userId}/snapshots/{snapshotId} ====================
+      match /snapshots/{snapshotId} {
+        allow get: if isVerifiedOwner(userId)
+          && isValidId(userId)
+          && isValidId(snapshotId)
+          && hasVerifiedSettingsParent(userId);
+
+        allow list: if isVerifiedOwner(userId)
+          && isValidId(userId)
+          && resource.data.ownerId == request.auth.uid;
+
+        allow create: if isVerifiedOwner(userId)
+          && isValidId(userId)
+          && isValidId(snapshotId)
+          && isValidSettingsSnapshot(incoming())
+          && incoming().ownerId == userId
+          && incoming().createdAt == request.time
+          && hasVerifiedSettingsParent(userId);
+
+        allow update: if false;
+
+        allow delete: if isVerifiedOwner(userId)
+          && isValidId(userId)
+          && isValidId(snapshotId)
+          && existing().ownerId == request.auth.uid
+          && hasVerifiedSettingsParent(userId);
+      }
+    }
+  }
+}

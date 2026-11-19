@@ -14,6 +14,8 @@ import { MobileBottomNav } from './components/MobileBottomNav';
 import { OfflineStatusBanner } from './components/PWAControls';
 import { ShortcutProvider } from './context/ShortcutContext';
 import { ShortcutsModal } from './components/ShortcutsModal';
+import { SettingsModal } from './components/settings/SettingsModal';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 function ArdunoLabShell() {
   const { activeTab, platformConfig, lang, simulatorFocusMode } = useApp();
@@ -61,6 +63,7 @@ function ArdunoLabShell() {
       </main>
       {!isFocusActive && <MobileBottomNav />}
       {!isFocusActive && <ProfileDrawer />}
+      <SettingsModal />
       <OfflineStatusBanner />
       <ShortcutsModal />
     </div>
@@ -69,10 +72,12 @@ function ArdunoLabShell() {
 
 export default function App() {
   return (
-    <AppProvider>
-      <ShortcutProvider>
-        <ArdunoLabShell />
-      </ShortcutProvider>
-    </AppProvider>
+    <ErrorBoundary>
+      <AppProvider>
+        <ShortcutProvider>
+          <ArdunoLabShell />
+        </ShortcutProvider>
+      </AppProvider>
+    </ErrorBoundary>
   );
 }

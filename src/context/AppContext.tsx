@@ -4,6 +4,7 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import {
@@ -26,6 +27,26 @@ import type {
 import { LESSONS, STATION_REQUIREMENTS } from '../data/lessons';
 import { arduinoCppToBlocks } from '../engine/blocklyBridge';
 import { soundEngine } from '../utils/sound';
+import {
+  DEFAULT_USER_SETTINGS,
+  deleteSettingsSnapshotFromFirestore,
+  exportSettingsSnapshotToFirestore,
+  loadLocalUserSettings,
+  sanitizeUserSettings,
+  saveLocalUserSettings,
+  saveUserSettingsToFirestore,
+  subscribeSettingsSnapshots,
+  subscribeUserSettings,
+  type AccentTheme,
+  type FontSizeScale,
+  type ThemePreference,
+  type UserSettingsData,
+  type UserSettingsSnapshot,
+} from '../services/userSettingsFirestore';
+
+export type { AccentTheme, FontSizeScale, ThemePreference, UserSettingsData, UserSettingsSnapshot };
+
+export type SettingsSyncStatus = 'guest' | 'syncing' | 'synced' | 'error';
 
 export type ActiveTab =
   | 'studio'
@@ -35,8 +56,6 @@ export type ActiveTab =
   | 'challenges'
   | 'leaderboard'
   | 'admin';
-
-export type ThemePreference = 'system' | 'light' | 'dark';
 
 function getSystemTheme(): 'dark' | 'light' {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
@@ -119,8 +138,25 @@ interface AppContextValue {
   themePreference: ThemePreference;
   setThemePreference: (pref: ThemePreference) => void;
   toggleTheme: () => void;
+  accentTheme: AccentTheme;
+  fontSize: FontSizeScale;
+  codeFontSize: number;
+  reducedMotion: boolean;
   soundEnabled: boolean;
   toggleSound: () => void;
+  userSettings: UserSettingsData;
+  updateUserSettings: (patch: Partial<UserSettingsData>) => void;
+  resetUserSettings: () => void;
+  settingsOpen: boolean;
+  setSettingsOpen: (open: boolean) => void;
+  settingsSyncStatus: SettingsSyncStatus;
+  settingsLastSyncedAt: number | null;
+  settingsSyncError: string | null;
+  settingsSnapshots: UserSettingsSnapshot[];
+  syncSettingsToFirebase: () => Promise<boolean>;
+  exportSettingsSnapshot: (label: string) => Promise<boolean>;
+  restoreSettingsSnapshot: (snapshot: UserSettingsSnapshot) => Promise<void>;
+  deleteSettingsSnapshot: (snapshotId: string) => Promise<void>;
   activeTab: ActiveTab;
   setActiveTab: (tab: ActiveTab) => void;
   profileOpen: boolean;
@@ -190,32 +226,34 @@ interface AppContextValue {
 const AppContext = createContext<AppContextValue | null>(null);
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const [lang, setLangState] = useState<Language>(() => {
-    const saved = localStorage.getItem('ardunolab_lang');
-    if (saved === 'ar' || saved === 'en' || saved === 'fr') return saved;
-    return 'ar';
-  });
+  const [userSettings, setUserSettings] = useState<UserSettingsData>(loadLocalUserSettings);
+  const userSettingsRef = useRef(userSettings);
+  userSettingsRef.current = userSettings;
 
-  const [themePreference, setThemePreferenceState] = useState<ThemePreference>(() => {
-    try {
-      const saved = localStorage.getItem('ardunolab_theme');
-      if (saved === 'light' || saved === 'dark' || saved === 'system') {
-        return saved;
-      }
-    } catch {
-      // ignore storage errors
-    }
-    return 'system';
-  });
+  const lang = userSettings.preferredLang;
+  const themePreference = userSettings.themePreference;
+  const accentTheme = userSettings.accentTheme;
+  const fontSize = userSettings.fontSize;
+  const codeFontSize = userSettings.codeFontSize;
+  const soundEnabled = userSettings.soundEnabled;
+  const reducedMotion = userSettings.reducedMotion;
 
   const [systemTheme, setSystemTheme] = useState<'dark' | 'light'>(getSystemTheme);
   const theme: 'dark' | 'light' =
     themePreference === 'system' ? systemTheme : themePreference;
 
-  const [soundEnabled, setSoundEnabled] = useState(true);
   const [activeTab, setActiveTabState] = useState<ActiveTab>('studio');
   const [profileOpen, setProfileOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [simulatorFocusMode, setSimulatorFocusMode] = useState(false);
+
+  const [settingsSyncStatus, setSettingsSyncStatus] = useState<SettingsSyncStatus>('guest');
+  const [settingsLastSyncedAt, setSettingsLastSyncedAt] = useState<number | null>(null);
+  const [settingsSyncError, setSettingsSyncError] = useState<string | null>(null);
+  const [settingsSnapshots, setSettingsSnapshots] = useState<UserSettingsSnapshot[]>([]);
+  const remoteHydratedRef = useRef(false);
+  const skipNextAutoSyncRef = useRef(false);
+  const autoSyncTimerRef = useRef<number | null>(null);
 
   const setActiveTab = useCallback((tab: ActiveTab) => {
     setActiveTabState(tab);
@@ -228,7 +266,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     soundEngine.playSelect();
     setSimulatorFocusMode((prev) => {
       const next = !prev;
-      if (next) setProfileOpen(false);
+      if (next) {
+        setProfileOpen(false);
+        setSettingsOpen(false);
+      }
       return next;
     });
   }, []);
@@ -277,13 +318,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [simCircuit, setSimCircuit] = useState<CircuitState>(starterLesson.circuit);
   const [autoRunToken, setAutoRunToken] = useState<number>(0);
 
-  // Sync HTML dir, lang, and dark class
+  // Sync HTML dir, lang, accent theme, font scale, code font size, reduced motion & local cache
   useEffect(() => {
     const html = document.documentElement;
-    html.setAttribute('lang', lang);
-    html.setAttribute('dir', lang === 'ar' ? 'rtl' : 'ltr');
-    localStorage.setItem('ardunolab_lang', lang);
-  }, [lang]);
+    html.setAttribute('lang', userSettings.preferredLang);
+    html.setAttribute('dir', userSettings.preferredLang === 'ar' ? 'rtl' : 'ltr');
+    html.setAttribute('data-accent', userSettings.accentTheme);
+    html.setAttribute('data-font-scale', userSettings.fontSize);
+    html.setAttribute('data-reduced-motion', userSettings.reducedMotion ? 'true' : 'false');
+    html.style.setProperty('--code-font-size', `${userSettings.codeFontSize}px`);
+    soundEngine.setEnabled(userSettings.soundEnabled);
+    saveLocalUserSettings(userSettings);
+  }, [userSettings]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
@@ -306,12 +352,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const html = document.documentElement;
     html.classList.toggle('dark', theme === 'dark');
     html.style.colorScheme = theme;
-    try {
-      localStorage.setItem('ardunolab_theme', themePreference);
-    } catch {
-      // ignore storage errors
-    }
-  }, [theme, themePreference]);
+  }, [theme]);
 
   const refreshPlatformConfig = useCallback(async () => {
     try {
@@ -382,9 +423,100 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return [...LESSONS, ...mappedCustom];
   }, [platformConfig.customLessons, starterLesson.circuit]);
 
+  const updateUserSettings = useCallback((patch: Partial<UserSettingsData>) => {
+    setUserSettings((prev) => {
+      const next = sanitizeUserSettings({ ...prev, ...patch }, prev);
+      saveLocalUserSettings(next);
+      return next;
+    });
+  }, []);
+
+  const resetUserSettings = useCallback(() => {
+    soundEngine.playSelect();
+    setUserSettings(DEFAULT_USER_SETTINGS);
+  }, []);
+
+  const syncSettingsToFirebase = useCallback(async (): Promise<boolean> => {
+    if (!firebaseUser) {
+      setSettingsSyncStatus('guest');
+      return false;
+    }
+    setSettingsSyncStatus('syncing');
+    setSettingsSyncError(null);
+    try {
+      await saveUserSettingsToFirestore(firebaseUser.uid, userSettingsRef.current);
+      setSettingsSyncStatus('synced');
+      setSettingsLastSyncedAt(Date.now());
+      return true;
+    } catch (err) {
+      setSettingsSyncStatus('error');
+      setSettingsSyncError(err instanceof Error ? err.message : 'Firebase sync failed');
+      return false;
+    }
+  }, [firebaseUser]);
+
+  const exportSettingsSnapshot = useCallback(
+    async (label: string): Promise<boolean> => {
+      if (!firebaseUser) return false;
+      setSettingsSyncStatus('syncing');
+      setSettingsSyncError(null);
+      try {
+        await exportSettingsSnapshotToFirestore(
+          firebaseUser.uid,
+          label,
+          userSettingsRef.current,
+        );
+        setSettingsSyncStatus('synced');
+        setSettingsLastSyncedAt(Date.now());
+        soundEngine.playSuccess();
+        return true;
+      } catch (err) {
+        setSettingsSyncStatus('error');
+        setSettingsSyncError(err instanceof Error ? err.message : 'Snapshot export failed');
+        soundEngine.playError();
+        return false;
+      }
+    },
+    [firebaseUser],
+  );
+
+  const restoreSettingsSnapshot = useCallback(
+    async (snapshot: UserSettingsSnapshot): Promise<void> => {
+      soundEngine.playSelect();
+      const restored = sanitizeUserSettings(snapshot);
+      setUserSettings(restored);
+      if (firebaseUser) {
+        setSettingsSyncStatus('syncing');
+        setSettingsSyncError(null);
+        try {
+          await saveUserSettingsToFirestore(firebaseUser.uid, restored);
+          setSettingsSyncStatus('synced');
+          setSettingsLastSyncedAt(Date.now());
+        } catch (err) {
+          setSettingsSyncStatus('error');
+          setSettingsSyncError(err instanceof Error ? err.message : 'Restore sync failed');
+        }
+      }
+    },
+    [firebaseUser],
+  );
+
+  const deleteSettingsSnapshot = useCallback(
+    async (snapshotId: string): Promise<void> => {
+      if (!firebaseUser) return;
+      soundEngine.playSelect();
+      try {
+        await deleteSettingsSnapshotFromFirestore(firebaseUser.uid, snapshotId);
+      } catch (err) {
+        setSettingsSyncError(err instanceof Error ? err.message : 'Delete snapshot failed');
+      }
+    },
+    [firebaseUser],
+  );
+
   const setLang = useCallback(
     (nextLang: Language) => {
-      setLangState(nextLang);
+      updateUserSettings({ preferredLang: nextLang });
       soundEngine.playSelect();
       if (firebaseUser) {
         firebaseUser
@@ -402,25 +534,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           .catch(() => {});
       }
     },
-    [firebaseUser],
+    [firebaseUser, updateUserSettings],
   );
 
-  const setThemePreference = useCallback((pref: ThemePreference) => {
-    soundEngine.playSelect();
-    setThemePreferenceState(pref);
-  }, []);
+  const setThemePreference = useCallback(
+    (pref: ThemePreference) => {
+      soundEngine.playSelect();
+      updateUserSettings({ themePreference: pref });
+    },
+    [updateUserSettings],
+  );
 
   const toggleTheme = useCallback(() => {
     soundEngine.playSelect();
-    setThemePreferenceState(theme === 'dark' ? 'light' : 'dark');
-  }, [theme]);
+    updateUserSettings({ themePreference: theme === 'dark' ? 'light' : 'dark' });
+  }, [theme, updateUserSettings]);
 
   const toggleSound = useCallback(() => {
-    setSoundEnabled((prev) => {
-      const next = !prev;
+    setUserSettings((prev) => {
+      const next = !prev.soundEnabled;
       soundEngine.setEnabled(next);
       if (next) soundEngine.playSelect();
-      return next;
+      return { ...prev, soundEnabled: next };
     });
   }, []);
 
@@ -476,6 +611,108 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
     return () => unsub();
   }, [hydrateCloudData]);
+
+  // Real-time Firebase Firestore cross-device sync for UserSettings & Exported Snapshots
+  useEffect(() => {
+    if (authLoading) return;
+    if (!firebaseUser) {
+      remoteHydratedRef.current = false;
+      setSettingsSyncStatus('guest');
+      setSettingsLastSyncedAt(null);
+      setSettingsSyncError(null);
+      setSettingsSnapshots([]);
+      return;
+    }
+
+    setSettingsSyncStatus('syncing');
+    setSettingsSyncError(null);
+    remoteHydratedRef.current = false;
+
+    const unsubSettings = subscribeUserSettings(
+      firebaseUser.uid,
+      (remote, updatedAtMs) => {
+        if (remote) {
+          remoteHydratedRef.current = true;
+          setSettingsSyncStatus('synced');
+          if (updatedAtMs) setSettingsLastSyncedAt(updatedAtMs);
+          // Apply remote cross-device preferences if they differ from local state
+          const cur = userSettingsRef.current;
+          const changed =
+            cur.themePreference !== remote.themePreference ||
+            cur.accentTheme !== remote.accentTheme ||
+            cur.fontSize !== remote.fontSize ||
+            cur.codeFontSize !== remote.codeFontSize ||
+            cur.preferredLang !== remote.preferredLang ||
+            cur.soundEnabled !== remote.soundEnabled ||
+            cur.reducedMotion !== remote.reducedMotion;
+          if (changed) {
+            skipNextAutoSyncRef.current = true;
+            setUserSettings(remote);
+          }
+        } else if (!remoteHydratedRef.current) {
+          // First time this user signs in: seed Firestore with their current local preferences
+          remoteHydratedRef.current = true;
+          saveUserSettingsToFirestore(firebaseUser.uid, userSettingsRef.current)
+            .then(() => {
+              setSettingsSyncStatus('synced');
+              setSettingsLastSyncedAt(Date.now());
+            })
+            .catch((err) => {
+              setSettingsSyncStatus('error');
+              setSettingsSyncError(
+                err instanceof Error ? err.message : 'Initial Firebase sync failed',
+              );
+            });
+        }
+      },
+      (errMsg) => {
+        setSettingsSyncStatus('error');
+        setSettingsSyncError(errMsg);
+      },
+    );
+
+    const unsubSnapshots = subscribeSettingsSnapshots(
+      firebaseUser.uid,
+      (snaps) => setSettingsSnapshots(snaps),
+      (errMsg) => setSettingsSyncError(errMsg),
+    );
+
+    return () => {
+      unsubSettings();
+      unsubSnapshots();
+    };
+  }, [authLoading, firebaseUser]);
+
+  // Debounced auto-sync to Firebase Firestore whenever a signed-in user modifies settings
+  useEffect(() => {
+    if (!firebaseUser || !remoteHydratedRef.current) return;
+    if (skipNextAutoSyncRef.current) {
+      skipNextAutoSyncRef.current = false;
+      return;
+    }
+    if (autoSyncTimerRef.current !== null) {
+      window.clearTimeout(autoSyncTimerRef.current);
+    }
+    setSettingsSyncStatus('syncing');
+    autoSyncTimerRef.current = window.setTimeout(() => {
+      saveUserSettingsToFirestore(firebaseUser.uid, userSettings)
+        .then(() => {
+          setSettingsSyncStatus('synced');
+          setSettingsLastSyncedAt(Date.now());
+          setSettingsSyncError(null);
+        })
+        .catch((err) => {
+          setSettingsSyncStatus('error');
+          setSettingsSyncError(err instanceof Error ? err.message : 'Auto-sync failed');
+        });
+    }, 450);
+
+    return () => {
+      if (autoSyncTimerRef.current !== null) {
+        window.clearTimeout(autoSyncTimerRef.current);
+      }
+    };
+  }, [firebaseUser, userSettings]);
 
   const signInWithGoogle = useCallback(async () => {
     setAuthError(null);
@@ -924,8 +1161,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     themePreference,
     setThemePreference,
     toggleTheme,
+    accentTheme,
+    fontSize,
+    codeFontSize,
+    reducedMotion,
     soundEnabled,
     toggleSound,
+    userSettings,
+    updateUserSettings,
+    resetUserSettings,
+    settingsOpen,
+    setSettingsOpen,
+    settingsSyncStatus,
+    settingsLastSyncedAt,
+    settingsSyncError,
+    settingsSnapshots,
+    syncSettingsToFirebase,
+    exportSettingsSnapshot,
+    restoreSettingsSnapshot,
+    deleteSettingsSnapshot,
     activeTab,
     setActiveTab,
     profileOpen,

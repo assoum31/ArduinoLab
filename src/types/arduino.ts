@@ -14,7 +14,8 @@ export type ComponentKind =
   | 'ultrasonic'
   | 'servo'
   | 'buzzer'
-  | 'temp-sensor';
+  | 'temp-sensor'
+  | 'multimeter';
 
 export interface ComponentPinDef {
   id: string;

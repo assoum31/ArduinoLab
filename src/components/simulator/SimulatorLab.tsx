@@ -82,11 +82,21 @@ export function SimulatorLab() {
   const [explorerOpen, setExplorerOpen] = useState<boolean>(() =>
     typeof window !== 'undefined' ? window.innerWidth >= 1280 : true,
   );
+  const [draggingLibraryKind, setDraggingLibraryKind] = useState<ComponentKind | null>(null);
   const [mobilePane, setMobilePane] = useState<'circuit' | 'editor' | 'scope' | 'serial'>('circuit');
   const [showOscilloscope, setShowOscilloscope] = useState(true);
   const [showFocusSerial, setShowFocusSerial] = useState(false);
   const [showFocusPalette, setShowFocusPalette] = useState(false);
   const [running, setRunning] = useState(false);
+
+  // Defensive cleanup if a library drag terminates outside the canvas or browser window
+  useEffect(() => {
+    if (!draggingLibraryKind) return;
+    const handleGlobalDragEnd = () => setDraggingLibraryKind(null);
+    window.addEventListener('dragend', handleGlobalDragEnd);
+    return () => window.removeEventListener('dragend', handleGlobalDragEnd);
+  }, [draggingLibraryKind]);
+  const [pinModes, setPinModes] = useState<Record<string, 'INPUT' | 'OUTPUT' | 'INPUT_PULLUP'>>({});
   const [pinValues, setPinValues] = useState<Record<string, number>>({});
   const [servoAngles, setServoAngles] = useState<Record<string, number>>({});
   const [buzzerTone, setBuzzerTone] = useState<{ pin: string; freq: number } | null>(null);
@@ -124,6 +134,7 @@ export function SimulatorLab() {
     const runner = new ArduinoSimulatorRunner({
       getCircuit: () => circuitRef.current,
       onStateChange: (patch) => {
+        setPinModes(patch.pinModes);
         setPinValues(patch.pinValues);
         setServoAngles(patch.servoAngles);
         setBuzzerTone(patch.buzzerTone);
@@ -235,7 +246,7 @@ export function SimulatorLab() {
         kind,
         x: Math.max(360, Math.min(725, rawX)),
         y: Math.max(80, Math.min(340, rawY)),
-        label: kind.toUpperCase().replace('-', ' '),
+        label: kind === 'multimeter' ? 'DMM' : kind.toUpperCase().replace('-', ' '),
         value: defaultVal,
       };
       return { ...prev, components: [...prev.components, comp] };
@@ -261,6 +272,7 @@ export function SimulatorLab() {
   const handleResetSimulation = () => {
     runnerRef.current?.stop();
     setRunning(false);
+    setPinModes({});
     setPinValues({});
     setServoAngles({});
     setLedD13On(false);
@@ -865,6 +877,13 @@ export function SimulatorLab() {
                     setMobilePane('circuit');
                   }
                 }}
+                onDragPartStart={(kind) => {
+                  setDraggingLibraryKind(kind);
+                  if (typeof window !== 'undefined' && window.innerWidth < 1280) {
+                    setMobilePane('circuit');
+                  }
+                }}
+                onDragPartEnd={() => setDraggingLibraryKind(null)}
                 onClose={() => {
                   soundEngine.playSelect();
                   setExplorerOpen(false);
@@ -903,6 +922,7 @@ export function SimulatorLab() {
                 viewMode={boardView}
                 running={running}
                 ledD13On={ledD13On}
+                pinModes={pinModes}
                 pinValues={pinValues}
                 servoAngles={servoAngles}
                 buzzerTone={buzzerTone}
@@ -910,6 +930,8 @@ export function SimulatorLab() {
                 diagnostics={analysis.diagnostics}
                 compactPalette={simulatorFocusMode && !showFocusPalette}
                 svgExternalRef={breadboardSvgRef}
+                draggingLibraryKind={draggingLibraryKind}
+                onDropLibraryEnd={() => setDraggingLibraryKind(null)}
               />
             </div>
 

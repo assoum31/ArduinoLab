@@ -2,13 +2,67 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @layer base {
-  :root {
+  :root,
+  html[data-accent="teal"] {
     --arduino-teal: #00878f;
     --arduino-teal-dark: #006d73;
-    --arduino-teal-light: #00a5ae;
+    --arduino-teal-light: #22c6cf;
+    --accent-primary: #00878f;
+    --accent-primary-hover: #006d73;
+    --accent-primary-light: #22c6cf;
+    --code-font-size: 13px;
     --surface-canvas: #f8fafc;
     --surface-card: #ffffff;
     --border-subtle: #e2e8f0;
+  }
+
+  html[data-accent="emerald"] {
+    --arduino-teal: #059669;
+    --arduino-teal-dark: #047857;
+    --arduino-teal-light: #34d399;
+    --accent-primary: #059669;
+    --accent-primary-hover: #047857;
+    --accent-primary-light: #34d399;
+  }
+
+  html[data-accent="indigo"] {
+    --arduino-teal: #4f46e5;
+    --arduino-teal-dark: #4338ca;
+    --arduino-teal-light: #818cf8;
+    --accent-primary: #4f46e5;
+    --accent-primary-hover: #4338ca;
+    --accent-primary-light: #818cf8;
+  }
+
+  html[data-accent="amber"] {
+    --arduino-teal: #d97706;
+    --arduino-teal-dark: #b45309;
+    --arduino-teal-light: #fbbf24;
+    --accent-primary: #d97706;
+    --accent-primary-hover: #b45309;
+    --accent-primary-light: #fbbf24;
+  }
+
+  html[data-accent="rose"] {
+    --arduino-teal: #e11d48;
+    --arduino-teal-dark: #be123c;
+    --arduino-teal-light: #fb7185;
+    --accent-primary: #e11d48;
+    --accent-primary-hover: #be123c;
+    --accent-primary-light: #fb7185;
+  }
+
+  html[data-font-scale="sm"] {
+    font-size: 14.5px;
+  }
+  html[data-font-scale="md"] {
+    font-size: 16px;
+  }
+  html[data-font-scale="lg"] {
+    font-size: 17.5px;
+  }
+  html[data-font-scale="xl"] {
+    font-size: 19px;
   }
 
   .dark {
@@ -23,6 +77,42 @@
 
   html[dir="ltr"] {
     font-family: "Plus Jakarta Sans", "Cairo", system-ui, -apple-system, sans-serif;
+  }
+
+  /* Live Accent Theme re-theming across all primary ArdunoLab accent utilities */
+  html[data-accent]:not([data-accent="teal"]) .bg-\[\#00878F\] {
+    background-color: var(--accent-primary) !important;
+  }
+  html[data-accent]:not([data-accent="teal"]) .hover\:bg-\[\#006d73\]:hover,
+  html[data-accent]:not([data-accent="teal"]) .hover\:bg-\[\#00737a\]:hover {
+    background-color: var(--accent-primary-hover) !important;
+  }
+  html[data-accent]:not([data-accent="teal"]) .text-\[\#00878F\] {
+    color: var(--accent-primary) !important;
+  }
+  html[data-accent]:not([data-accent="teal"]).dark .dark\:text-\[\#22c6cf\] {
+    color: var(--accent-primary-light) !important;
+  }
+  html[data-accent]:not([data-accent="teal"]) .border-\[\#00878F\] {
+    border-color: var(--accent-primary) !important;
+  }
+  html[data-accent]:not([data-accent="teal"]) .bg-\[\#00878F\]\/10 {
+    background-color: color-mix(in srgb, var(--accent-primary) 12%, transparent) !important;
+  }
+  html[data-accent]:not([data-accent="teal"]) .bg-\[\#00878F\]\/15 {
+    background-color: color-mix(in srgb, var(--accent-primary) 16%, transparent) !important;
+  }
+  html[data-accent]:not([data-accent="teal"]) .accent-\[\#00878F\] {
+    accent-color: var(--accent-primary) !important;
+  }
+
+  html[data-reduced-motion="true"] *,
+  html[data-reduced-motion="true"] *::before,
+  html[data-reduced-motion="true"] *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 
   code,
@@ -77,6 +167,128 @@
 
 .tabular-nums {
   font-variant-numeric: tabular-nums;
+}
+
+/* Smooth breadboard wire connection animations (uses SVG pathLength="1") */
+@keyframes wire-draw-in {
+  0% {
+    stroke-dashoffset: 1;
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes wire-energy-pulse {
+  0% {
+    stroke-dashoffset: 0.28;
+    opacity: 0;
+  }
+  14% {
+    opacity: 1;
+  }
+  78% {
+    opacity: 0.95;
+  }
+  100% {
+    stroke-dashoffset: -1.12;
+    opacity: 0;
+  }
+}
+
+@keyframes wire-halo-fade {
+  0% {
+    stroke-dashoffset: 1;
+    opacity: 0.15;
+  }
+  32% {
+    stroke-dashoffset: 0;
+    opacity: 0.65;
+  }
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 0;
+  }
+}
+
+@keyframes wire-pin-ripple {
+  0% {
+    transform: scale(0.45);
+    opacity: 0.95;
+  }
+  100% {
+    transform: scale(2.55);
+    opacity: 0;
+  }
+}
+
+@keyframes wire-badge-pop {
+  0% {
+    opacity: 0;
+    transform: translateY(4px) scale(0.92);
+  }
+  16% {
+    opacity: 1;
+    transform: translateY(0px) scale(1);
+  }
+  78% {
+    opacity: 1;
+    transform: translateY(-2px) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-7px) scale(0.96);
+  }
+}
+
+.wire-draw-in {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+  animation: wire-draw-in 0.38s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.wire-halo-fade {
+  stroke-dasharray: 1;
+  animation: wire-halo-fade 1.15s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.wire-energy-pulse {
+  stroke-dasharray: 0.24 1.3;
+  animation: wire-energy-pulse 0.92s cubic-bezier(0.32, 0.08, 0.24, 1) 0.08s both;
+}
+
+.wire-energy-core {
+  stroke-dasharray: 0.14 1.4;
+  animation: wire-energy-pulse 0.92s cubic-bezier(0.32, 0.08, 0.24, 1) 0.1s both;
+}
+
+.wire-pin-ripple {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: wire-pin-ripple 0.68s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.wire-badge-pop {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: wire-badge-pop 1.35s ease-out both;
+}
+
+/* Live electric current flow stream along energized circuit paths (pathLength="100") */
+@keyframes current-dash-flow {
+  0% {
+    stroke-dashoffset: 24;
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+.current-flow-stream {
+  stroke-dasharray: 5 19;
+  animation-name: current-dash-flow;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {

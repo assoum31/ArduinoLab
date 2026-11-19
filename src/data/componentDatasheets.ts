@@ -1,7 +1,7 @@
 import type { ComponentKind } from '../types/arduino';
 import type { LocalizedText } from '../i18n/translations';
 
-export type ExplorerCategory = 'outputs' | 'passives' | 'inputs' | 'sensors';
+export type ExplorerCategory = 'outputs' | 'passives' | 'inputs' | 'sensors' | 'instruments';
 
 export interface ComponentDatasheet {
   kind: ComponentKind;
@@ -481,5 +481,61 @@ export const COMPONENT_DATASHEETS: readonly ComponentDatasheet[] = [
     },
     codeExample: 'float v = analogRead(A0) * (5.0 / 1024.0);\nfloat tempC = (v - 0.5) * 100.0;',
     keywords: ['temp', 'temperature', 'tmp36', 'thermal', 'sensor', 'celsius', 'حرارة', 'حساس', 'température'],
+  },
+  {
+    kind: 'multimeter',
+    category: 'instruments',
+    swatch: '#eab308',
+    partNumber: 'DMM-830 PRO',
+    packageType: 'Bench Digital Multimeter · V / mA / Ω',
+    name: {
+      ar: 'مالتيميتر رقمي (V / mA / Ω)',
+      en: 'Digital Multimeter (V / mA / Ω)',
+      fr: 'Multimètre Numérique (V / mA / Ω)',
+    },
+    summary: {
+      ar: 'جهاز قياس رقمي متعدد الوظائف لقياس فرق الجهد (V) وشدة التيار (mA) والمقاومة الكهربائية (Ω) عبر أي نقطتين في الدائرة.',
+      en: 'Precision virtual bench multimeter to measure DC Voltage (V), DC Current (mA), and Resistance (Ω) across any two breadboard nodes.',
+      fr: 'Multimètre virtuel de précision pour mesurer la tension DC (V), le courant DC (mA) et la résistance (Ω) entre deux points du circuit.',
+    },
+    operatingVoltage: '0 – 20 V DC (Auto-Range)',
+    currentRating: '400 mA Fused Shunt (0.5 Ω)',
+    specs: [
+      { label: { ar: 'مقاومة الفولتميتر (V)', en: 'Voltmeter Impedance', fr: 'Impédance Voltmètre' }, value: '10 MΩ (Parallel)' },
+      { label: { ar: 'مقاومة الأميتر (mA)', en: 'Ammeter Shunt', fr: 'Shunt Ampèremètre' }, value: '0.5 Ω · 400 mA Fuse' },
+      { label: { ar: 'مدى الأوميتر (Ω)', en: 'Ohmmeter Range', fr: 'Plage Ohmmètre' }, value: '0.0 Ω – 9.5 MΩ / OL' },
+      { label: { ar: 'تبديل الوضع', en: 'Mode Selector', fr: 'Sélecteur' }, value: 'DC V · DC mA · Ω' },
+    ],
+    pinout: [
+      {
+        pin: 'VΩ+',
+        role: 'vcc',
+        desc: {
+          ar: 'المجس الأحمر (+) — نقطة القياس الموجبة (بالتوازي للجهد والمقاومة، وبالتوالي للتيار)',
+          en: 'Red probe (+) — positive test point (parallel for V/Ω, in series for mA)',
+          fr: 'Sonde rouge (+) — point de test positif (parallèle pour V/Ω, série pour mA)',
+        },
+      },
+      {
+        pin: 'COM',
+        role: 'gnd',
+        desc: {
+          ar: 'المجس الأسود (−) — النقطة المرجعية أو مخرج التيار السالب',
+          en: 'Black probe (−) — common reference point or negative return',
+          fr: 'Sonde noire (−) — référence commune ou retour négatif',
+        },
+      },
+    ],
+    wiringNote: {
+      ar: 'قِس الجهد (V) بالتوازي، والتيار (mA) بالتوالي داخل المسار، والمقاومة (Ω) والدائرة متوقفة لتفادي تحذير LIVE!.',
+      en: 'Probe Voltage (V) in parallel, Current (mA) in series with a load, and Resistance (Ω) with power off to avoid LIVE! warnings.',
+      fr: 'Mesurez la tension (V) en parallèle, le courant (mA) en série, et la résistance (Ω) hors tension.',
+    },
+    codeExample: '// Bench test instrument — no firmware code needed.\n// Click V, mA, or Ω directly on the meter face!',
+    keywords: [
+      'multimeter', 'dmm', 'voltmeter', 'ammeter', 'ohmmeter', 'meter', 'voltage', 'current', 'resistance', 'probe', 'instrument', 'test', 'measure',
+      'مالتيميتر', 'افوميتر', 'أفوميتر', 'قياس', 'فولتميتر', 'أميتر', 'أوميتر', 'جهد', 'تيار', 'مقاومة', 'أجهزة قياس',
+      'multimetre', 'voltmetre', 'amperemetre', 'ohmmetre', 'mesure', 'tension', 'courant', 'instrument',
+    ],
   },
 ];

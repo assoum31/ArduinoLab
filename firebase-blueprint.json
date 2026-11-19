@@ -1,0 +1,159 @@
+{
+  "entities": {
+    "UserSettings": {
+      "title": "UserSettings",
+      "description": "Cross-device synchronized learning preferences for an authenticated user (theme mode, color accent palette, UI font size, code editor font size, language, sound, and reduced motion).",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the user who owns these settings."
+        },
+        "themePreference": {
+          "type": "string",
+          "maxLength": 16,
+          "enum": ["system", "light", "dark"],
+          "description": "Preferred light/dark/system color scheme."
+        },
+        "accentTheme": {
+          "type": "string",
+          "maxLength": 16,
+          "enum": ["teal", "emerald", "indigo", "amber", "rose"],
+          "description": "Preferred primary UI accent color palette."
+        },
+        "fontSize": {
+          "type": "string",
+          "maxLength": 8,
+          "enum": ["sm", "md", "lg", "xl"],
+          "description": "Preferred global interface text scale."
+        },
+        "codeFontSize": {
+          "type": "integer",
+          "description": "Preferred Arduino C++ editor font size in pixels (12 to 20)."
+        },
+        "preferredLang": {
+          "type": "string",
+          "maxLength": 8,
+          "enum": ["ar", "en", "fr"],
+          "description": "Preferred interface language."
+        },
+        "soundEnabled": {
+          "type": "boolean",
+          "description": "Whether tactile UI & simulator sound effects are enabled."
+        },
+        "reducedMotion": {
+          "type": "boolean",
+          "description": "Whether reduced animation motion mode is enabled."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Immutable server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the latest preference sync."
+        }
+      },
+      "required": [
+        "ownerId",
+        "themePreference",
+        "accentTheme",
+        "fontSize",
+        "codeFontSize",
+        "preferredLang",
+        "soundEnabled",
+        "reducedMotion",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "UserSettingsSnapshot": {
+      "title": "UserSettingsSnapshot",
+      "description": "Immutable exported configuration preset snapshot stored in Firestore so the user can restore named study setups across devices.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the snapshot owner."
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60,
+          "description": "User-defined preset name (e.g. Night Study, Classroom Projector)."
+        },
+        "themePreference": {
+          "type": "string",
+          "maxLength": 16,
+          "enum": ["system", "light", "dark"],
+          "description": "Exported light/dark/system color scheme."
+        },
+        "accentTheme": {
+          "type": "string",
+          "maxLength": 16,
+          "enum": ["teal", "emerald", "indigo", "amber", "rose"],
+          "description": "Exported accent color theme."
+        },
+        "fontSize": {
+          "type": "string",
+          "maxLength": 8,
+          "enum": ["sm", "md", "lg", "xl"],
+          "description": "Exported global text scale."
+        },
+        "codeFontSize": {
+          "type": "integer",
+          "description": "Exported code editor font size in pixels (12 to 20)."
+        },
+        "preferredLang": {
+          "type": "string",
+          "maxLength": 8,
+          "enum": ["ar", "en", "fr"],
+          "description": "Exported language preference."
+        },
+        "soundEnabled": {
+          "type": "boolean",
+          "description": "Exported sound preference."
+        },
+        "reducedMotion": {
+          "type": "boolean",
+          "description": "Exported reduced motion preference."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Immutable server export timestamp."
+        }
+      },
+      "required": [
+        "ownerId",
+        "label",
+        "themePreference",
+        "accentTheme",
+        "fontSize",
+        "codeFontSize",
+        "preferredLang",
+        "soundEnabled",
+        "reducedMotion",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/userSettings/{userId}": {
+      "schema": { "$ref": "#/entities/UserSettings" },
+      "description": "Per-user private synchronized UI and learning preferences document keyed by Firebase Auth UID."
+    },
+    "/userSettings/{userId}/snapshots/{snapshotId}": {
+      "schema": { "$ref": "#/entities/UserSettingsSnapshot" },
+      "description": "Immutable cloud-exported settings preset snapshots owned by the user."
+    }
+  }
+}

@@ -1,12 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  Cable,
   CheckCircle2,
   Cpu,
   Flame,
+  Gauge,
   Grid3x3,
   Hand,
   Maximize2,
+  MessageSquareText,
   Plus,
   Route,
   Trash2,
@@ -26,12 +29,31 @@ import type {
 } from '../../types/arduino';
 import { COMPONENT_PINS, isLedKind } from '../../engine/arduinoSim';
 import {
+  computeCircuitCurrentFlow,
+  type CurrentFlowMode,
+  type FlowCategory,
+} from '../../engine/currentFlow';
+import {
+  computeMultimeterReadings,
+  getMultimeterModeFromValue,
+  getMultimeterValueFromMode,
+  type MultimeterMode,
+} from '../../engine/multimeterSolver';
+import {
   autoRouteCircuitWires,
   buildRoundedOrthogonalPath,
+  simplifyOrthogonalPoints,
+  type WirePoint,
 } from '../../engine/wireAutoRouter';
+import { useApp } from '../../context/AppContext';
 import { soundEngine } from '../../utils/sound';
 import { tLoc, translations, type Language } from '../../i18n/translations';
 import { cn } from '../../lib/utils';
+import { ARDUNOLAB_COMPONENT_MIME } from './ComponentExplorerSidebar';
+import {
+  SmartComponentTooltip,
+  type SmartTooltipTarget,
+} from './SmartComponentTooltip';
 
 export const WIRE_COLORS = [
   { id: 'red', hex: '#ef4444', label: '5V / Red' },
@@ -61,6 +83,7 @@ export const PALETTE_COMPONENTS: Array<{
   { kind: 'servo', name: { ar: 'محرك سيرفو SG90', en: 'SG90 Servo', fr: 'Servo SG90' }, swatch: '#2563eb' },
   { kind: 'buzzer', name: { ar: 'جرس Piezo', en: 'Piezo Buzzer', fr: 'Buzzer Piezo' }, swatch: '#334155' },
   { kind: 'temp-sensor', name: { ar: 'حساس حرارة', en: 'TMP36 Temp', fr: 'Temp TMP36' }, swatch: '#475569' },
+  { kind: 'multimeter', name: { ar: 'مالتيميتر V/mA/Ω', en: 'Multimeter', fr: 'Multimètre' }, swatch: '#eab308' },
 ];
 
 // Fixed SVG coordinates for Arduino Uno R3 pins (left board: x=24..285, y=42..365)
@@ -94,6 +117,91 @@ const ARDUINO_PINS: Array<{ id: string; label: string; x: number; y: number; gro
   { id: 'A5', label: 'A5', x: 46, y: 356, group: 'analog' },
 ];
 
+interface BreadboardPoint {
+  id: string;
+  x: number;
+  y: number;
+  kind: 'rail-pos' | 'rail-neg' | 'hole';
+  stripKey: string;
+  label: string;
+  col: number;
+  half?: 'top' | 'bot';
+}
+
+interface DragWireState {
+  fromNodeId: string;
+  startPt: WirePoint;
+  corners: WirePoint[];
+  axis: 'h' | 'v' | null;
+  cursorSnapped: WirePoint;
+  targetNodeId: string | null;
+  hasDragged: boolean;
+  pointerId: number;
+}
+
+const TOP_HOLE_ROWS: Array<{ row: number; letter: string; y: number }> = [
+  { row: 0, letter: 'A', y: 96 },
+  { row: 1, letter: 'B', y: 114 },
+  { row: 2, letter: 'C', y: 132 },
+  { row: 3, letter: 'D', y: 150 },
+  { row: 4, letter: 'E', y: 168 },
+];
+
+const BOT_HOLE_ROWS: Array<{ row: number; letter: string; y: number }> = [
+  { row: 0, letter: 'F', y: 228 },
+  { row: 1, letter: 'G', y: 246 },
+  { row: 2, letter: 'H', y: 264 },
+  { row: 3, letter: 'I', y: 282 },
+  { row: 4, letter: 'J', y: 300 },
+];
+
+const BREADBOARD_POINTS: BreadboardPoint[] = (() => {
+  const pts: BreadboardPoint[] = [];
+  // Top & bottom power rails (+5V / GND)
+  for (let col = 0; col < 12; col++) {
+    const rx = Number((376 + col * 29.6).toFixed(1));
+    pts.push(
+      { id: `bb:pos:top:${col}`, x: rx, y: 62, kind: 'rail-pos', stripKey: 'rail:pos:top', label: `+5V #${col + 1}`, col, half: 'top' },
+      { id: `bb:neg:top:${col}`, x: rx, y: 76, kind: 'rail-neg', stripKey: 'rail:neg:top', label: `GND #${col + 1}`, col, half: 'top' },
+      { id: `bb:pos:bot:${col}`, x: rx, y: 336, kind: 'rail-pos', stripKey: 'rail:pos:bot', label: `+5V #${col + 1}`, col, half: 'bot' },
+      { id: `bb:neg:bot:${col}`, x: rx, y: 352, kind: 'rail-neg', stripKey: 'rail:neg:bot', label: `GND #${col + 1}`, col, half: 'bot' },
+    );
+  }
+  // 24 columns x 10 rows (A..E top strip, F..J bottom strip)
+  for (let col = 0; col < 24; col++) {
+    const cx = Number((376 + col * 14.8).toFixed(1));
+    for (const r of TOP_HOLE_ROWS) {
+      pts.push({
+        id: `bb:col:${col}:top:${r.row}`,
+        x: cx,
+        y: r.y,
+        kind: 'hole',
+        stripKey: `col:${col}:top`,
+        label: `${col + 1}${r.letter}`,
+        col,
+        half: 'top',
+      });
+    }
+    for (const r of BOT_HOLE_ROWS) {
+      pts.push({
+        id: `bb:col:${col}:bot:${r.row}`,
+        x: cx,
+        y: r.y,
+        kind: 'hole',
+        stripKey: `col:${col}:bot`,
+        label: `${col + 1}${r.letter}`,
+        col,
+        half: 'bot',
+      });
+    }
+  }
+  return pts;
+})();
+
+const BREADBOARD_POINT_MAP = new Map<string, BreadboardPoint>(
+  BREADBOARD_POINTS.map((p) => [p.id, p]),
+);
+
 function getResistorBands(kind: ComponentKind): [string, string, string, string] {
   if (kind === 'resistor-1k') return ['#78350f', '#0f172a', '#ef4444', '#d97706']; // Brown-Black-Red-Gold
   if (kind === 'resistor-10k') return ['#78350f', '#0f172a', '#f97316', '#d97706']; // Brown-Black-Orange-Gold
@@ -113,6 +221,127 @@ function getLedFill(kind: ComponentKind): { off: string; on: string; glow: strin
   }
 }
 
+interface WireConnectionAnim {
+  glowColor: string;
+  coreColor: string;
+  ringColor: string;
+  tag: string;
+}
+
+const PWM_ANIM_PINS = new Set(['D3', 'D5', 'D6', 'D9', 'D10', 'D11']);
+
+function getWireAnimationPalette(
+  fromNode: string,
+  toNode: string,
+  wireColor: string,
+): WireConnectionAnim {
+  const nodes = [fromNode, toNode];
+  const arduinoPins = nodes
+    .filter((n) => n.startsWith('arduino:'))
+    .map((n) => n.slice('arduino:'.length));
+
+  // Power supply rails (5V / 3.3V / VIN) -> vivid crimson-amber power pulse
+  if (arduinoPins.some((p) => p === '5V' || p === '3.3V' || p === 'VIN')) {
+    const rail = arduinoPins.find((p) => p === '5V' || p === '3.3V' || p === 'VIN') || '5V';
+    return {
+      glowColor: '#ef4444',
+      coreColor: '#fef2f2',
+      ringColor: '#f87171',
+      tag: `${rail} PWR`,
+    };
+  }
+
+  // Ground rails (GND) -> cool cyan-slate ground return pulse (high contrast in both themes)
+  if (arduinoPins.some((p) => p.startsWith('GND'))) {
+    return {
+      glowColor: '#38bdf8',
+      coreColor: '#e0f2fe',
+      ringColor: '#0ea5e9',
+      tag: 'GND',
+    };
+  }
+
+  // Analog pins (A0–A5) -> warm amber-gold sensor pulse
+  if (arduinoPins.some((p) => /^A[0-5]$/.test(p))) {
+    const pin = arduinoPins.find((p) => /^A[0-5]$/.test(p)) || 'ANALOG';
+    return {
+      glowColor: '#f59e0b',
+      coreColor: '#fef9c3',
+      ringColor: '#fbbf24',
+      tag: `${pin} ANALOG`,
+    };
+  }
+
+  // PWM digital pins -> electric cyan-teal pulse
+  if (arduinoPins.some((p) => PWM_ANIM_PINS.has(p))) {
+    const pin = arduinoPins.find((p) => PWM_ANIM_PINS.has(p)) || 'PWM';
+    return {
+      glowColor: wireColor === '#1e293b' ? '#06b6d4' : wireColor,
+      coreColor: '#ecfeff',
+      ringColor: '#22d3ee',
+      tag: `${pin} PWM`,
+    };
+  }
+
+  // Digital I/O or component-to-component link -> harmonized with selected wire color
+  const digitalPin = arduinoPins.find((p) => p.startsWith('D'));
+  const brightAccent = wireColor === '#1e293b' ? '#14b8a6' : wireColor;
+  return {
+    glowColor: brightAccent,
+    coreColor: '#ffffff',
+    ringColor: brightAccent,
+    tag: digitalPin ? `${digitalPin} SIG` : 'LINK OK',
+  };
+}
+
+interface CurrentFlowPalette {
+  stroke: string;
+  core: string;
+  glow: string;
+  arrowFill: string;
+  arrowStroke: string;
+}
+
+function getCurrentFlowPalette(
+  category: FlowCategory,
+  mode: CurrentFlowMode,
+): CurrentFlowPalette {
+  if (category === 'overload') {
+    return {
+      stroke: '#ef4444',
+      core: '#fef08a',
+      glow: '#f97316',
+      arrowFill: '#fef08a',
+      arrowStroke: '#991b1b',
+    };
+  }
+  if (category === 'signal') {
+    return {
+      stroke: '#38bdf8',
+      core: '#e0f2fe',
+      glow: '#0284c7',
+      arrowFill: '#e0f2fe',
+      arrowStroke: '#075985',
+    };
+  }
+  if (mode === 'electrons') {
+    return {
+      stroke: '#06b6d4',
+      core: '#cffafe',
+      glow: '#22d3ee',
+      arrowFill: '#a5f3fc',
+      arrowStroke: '#155e75',
+    };
+  }
+  return {
+    stroke: '#f59e0b',
+    core: '#fef08a',
+    glow: '#fbbf24',
+    arrowFill: '#fde047',
+    arrowStroke: '#78350f',
+  };
+}
+
 interface BreadboardCanvasProps {
   lang: Language;
   circuit: CircuitState;
@@ -120,6 +349,7 @@ interface BreadboardCanvasProps {
   viewMode: 'breadboard' | 'schematic';
   running: boolean;
   ledD13On: boolean;
+  pinModes?: Record<string, 'INPUT' | 'OUTPUT' | 'INPUT_PULLUP'>;
   pinValues: Record<string, number>;
   servoAngles: Record<string, number>;
   buzzerTone: { pin: string; freq: number } | null;
@@ -127,6 +357,8 @@ interface BreadboardCanvasProps {
   diagnostics: ElectricalDiagnostic[];
   compactPalette?: boolean;
   svgExternalRef?: React.MutableRefObject<SVGSVGElement | null>;
+  draggingLibraryKind?: ComponentKind | null;
+  onDropLibraryEnd?: () => void;
 }
 
 export function BreadboardCanvas({
@@ -136,6 +368,7 @@ export function BreadboardCanvas({
   viewMode,
   running,
   ledD13On,
+  pinModes = {},
   pinValues,
   servoAngles,
   buzzerTone,
@@ -143,15 +376,67 @@ export function BreadboardCanvas({
   diagnostics,
   compactPalette = false,
   svgExternalRef,
+  draggingLibraryKind = null,
+  onDropLibraryEnd,
 }: BreadboardCanvasProps) {
+  const { userSettings } = useApp();
   const svgRef = useRef<SVGSVGElement | null>(null);
   const canvasWrapRef = useRef<HTMLDivElement | null>(null);
   const [wireColor, setWireColor] = useState('#ef4444');
   const [wireStart, setWireStart] = useState<string | null>(null);
+  const [wiringToolActive, setWiringToolActive] = useState(false);
+  const [hoverNodeId, setHoverNodeId] = useState<string | null>(null);
+  const [dragWire, setDragWire] = useState<DragWireState | null>(null);
+  const suppressNextClickRef = useRef(false);
   const [cursorPt, setCursorPt] = useState<{ x: number; y: number } | null>(null);
   const [selectedCompId, setSelectedCompId] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [hoveredWireId, setHoveredWireId] = useState<string | null>(null);
+  const [paletteDragKind, setPaletteDragKind] = useState<ComponentKind | null>(null);
+  const [dropPreview, setDropPreview] = useState<{
+    kind: ComponentKind;
+    x: number;
+    y: number;
+  } | null>(null);
+  const activeDragKind = draggingLibraryKind ?? paletteDragKind;
+
+  // Smart context-aware hover tooltips for breadboard components & Arduino UNO
+  const [smartTooltipsEnabled, setSmartTooltipsEnabled] = useState(true);
+  const [tooltipTarget, setTooltipTarget] = useState<SmartTooltipTarget | null>(null);
+
+  // Live Electric Current Flow visualization state (active while simulation runs)
+  const [currentFlowEnabled, setCurrentFlowEnabled] = useState(true);
+  const [flowMode, setFlowMode] = useState<CurrentFlowMode>('conventional');
+  const systemReducedMotion =
+    typeof window !== 'undefined' &&
+    window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  const reducedMotion = userSettings.reducedMotion || systemReducedMotion;
+
+  // Active smooth connection animations keyed by newly established wire ID
+  const [wireAnims, setWireAnims] = useState<Record<string, WireConnectionAnim>>({});
+  const wireAnimTimersRef = useRef<Map<string, number>>(new Map());
+
+  useEffect(() => {
+    const timers = wireAnimTimersRef.current;
+    return () => {
+      for (const id of timers.values()) {
+        window.clearTimeout(id);
+      }
+      timers.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!activeDragKind) {
+      setDropPreview(null);
+    }
+  }, [activeDragKind]);
+
+  useEffect(() => {
+    if (!smartTooltipsEnabled || draggingId || wireStart || dragWire || activeDragKind) {
+      setTooltipTarget(null);
+    }
+  }, [smartTooltipsEnabled, draggingId, wireStart, dragWire, activeDragKind]);
 
   // Interactive CAD-style Workspace Zoom & Pan state (wheel + touch pinch zoom-in/zoom-out)
   const BASE_W = 770;
@@ -172,6 +457,33 @@ export function BreadboardCanvas({
   const [gridStep, setGridStep] = useState<10 | 15 | 20>(15);
   const GRID_ORIGIN_X = 360;
   const GRID_ORIGIN_Y = 80;
+
+  const toggleWiringTool = () => {
+    soundEngine.playSelect();
+    setWiringToolActive((prev) => {
+      const next = !prev;
+      if (next) {
+        setPanMode(false);
+        setDraggingId(null);
+        setSnapGridEnabled(true);
+        setWireStart(null);
+        setDragWire(null);
+      } else {
+        setDragWire(null);
+        setHoverNodeId(null);
+      }
+      return next;
+    });
+  };
+
+  const snapWireGridPoint = (x: number, y: number): WirePoint => {
+    const sx = GRID_ORIGIN_X + Math.round((x - GRID_ORIGIN_X) / gridStep) * gridStep;
+    const sy = GRID_ORIGIN_Y + Math.round((y - GRID_ORIGIN_Y) / gridStep) * gridStep;
+    return {
+      x: Math.max(12, Math.min(758, sx)),
+      y: Math.max(12, Math.min(388, sy)),
+    };
+  };
 
   const snapCoord = (x: number, y: number) => {
     if (!snapGridEnabled) {
@@ -337,7 +649,7 @@ export function BreadboardCanvas({
   const vbX = (BASE_W - vbW) / 2 - view.panX;
   const vbY = (BASE_H - vbH) / 2 - view.panY;
 
-  // Build quick lookup map of every connectable pin coordinate
+  // Build quick lookup map of every connectable pin & breadboard hole coordinate
   const buildPinCoordsMap = (components: PlacedComponent[]) => {
     const map = new Map<string, { x: number; y: number }>();
     ARDUINO_PINS.forEach((p) => map.set(`arduino:${p.id}`, { x: p.x, y: p.y }));
@@ -346,6 +658,9 @@ export function BreadboardCanvas({
       defs.forEach((d) => {
         map.set(`comp:${c.id}:${d.id}`, { x: c.x + d.dx, y: c.y + d.dy });
       });
+    });
+    BREADBOARD_POINTS.forEach((bp) => {
+      map.set(bp.id, { x: bp.x, y: bp.y });
     });
     return map;
   };
@@ -414,31 +729,109 @@ export function BreadboardCanvas({
       const pinDef = comp ? (COMPONENT_PINS[comp.kind] || []).find((p) => p.id === parts[2]) : undefined;
       return `${comp?.label || comp?.kind || parts[1]} · ${pinDef?.label || parts[2]}`;
     }
+    const bbPt = BREADBOARD_POINT_MAP.get(nodeId);
+    if (bbPt) {
+      return `BB ${bbPt.label}`;
+    }
     return nodeId;
   };
 
-  const handlePinClick = (nodeId: string, e: React.MouseEvent) => {
-    if (effectivePanMode) return;
-    e.stopPropagation();
-    if (!wireStart) {
-      setWireStart(nodeId);
-      soundEngine.playSelect();
-      return;
+  // Prioritize Arduino & component pins before breadboard holes for crisp magnetic snapping
+  const findNearestConnectableNode = (
+    x: number,
+    y: number,
+    excludeNodeId?: string,
+    maxDist = 13,
+  ): { id: string; pt: WirePoint } | null => {
+    let bestPin: { id: string; pt: WirePoint; dist: number } | null = null;
+    for (const p of ARDUINO_PINS) {
+      const id = `arduino:${p.id}`;
+      if (id === excludeNodeId) continue;
+      const dist = Math.hypot(p.x - x, p.y - y);
+      if (dist <= maxDist && (!bestPin || dist < bestPin.dist)) {
+        bestPin = { id, pt: { x: p.x, y: p.y }, dist };
+      }
     }
-    if (wireStart === nodeId) {
-      setWireStart(null);
-      return;
+    for (const comp of circuit.components) {
+      const defs = COMPONENT_PINS[comp.kind] || [];
+      for (const d of defs) {
+        const id = `comp:${comp.id}:${d.id}`;
+        if (id === excludeNodeId) continue;
+        const px = comp.x + d.dx;
+        const py = comp.y + d.dy;
+        const dist = Math.hypot(px - x, py - y);
+        if (dist <= maxDist && (!bestPin || dist < bestPin.dist)) {
+          bestPin = { id, pt: { x: px, y: py }, dist };
+        }
+      }
     }
-    // Create jumper wire (and auto-route immediately if Auto-Route mode is active)
+    if (bestPin) return { id: bestPin.id, pt: bestPin.pt };
+
+    if (viewMode === 'breadboard') {
+      const bbMaxDist = Math.min(maxDist, 10.5);
+      let bestBb: { id: string; pt: WirePoint; dist: number } | null = null;
+      for (const bp of BREADBOARD_POINTS) {
+        if (bp.id === excludeNodeId) continue;
+        const dist = Math.hypot(bp.x - x, bp.y - y);
+        if (dist <= bbMaxDist && (!bestBb || dist < bestBb.dist)) {
+          bestBb = { id: bp.id, pt: { x: bp.x, y: bp.y }, dist };
+        }
+      }
+      if (bestBb) return { id: bestBb.id, pt: bestBb.pt };
+    }
+    return null;
+  };
+
+  const buildDragWireWaypoints = (dw: DragWireState): WirePoint[] => {
+    const endPt = (dw.targetNodeId && pinCoords.get(dw.targetNodeId)) || dw.cursorSnapped;
+    const raw: WirePoint[] = [...dw.corners];
+    const last = raw[raw.length - 1] ?? dw.startPt;
+    if (Math.abs(last.x - endPt.x) > 0.5 && Math.abs(last.y - endPt.y) > 0.5) {
+      if (dw.axis === 'v') {
+        raw.push({ x: last.x, y: endPt.y });
+      } else {
+        raw.push({ x: endPt.x, y: last.y });
+      }
+    }
+    raw.push(endPt);
+    const cleaned = simplifyOrthogonalPoints(raw);
+    if (cleaned.length < 2) {
+      return [dw.startPt, endPt];
+    }
+    cleaned[0] = dw.startPt;
+    cleaned[cleaned.length - 1] = endPt;
+    return cleaned;
+  };
+
+  const commitWireConnection = (
+    fromNode: string,
+    toNode: string,
+    customWaypoints?: WirePoint[],
+  ) => {
+    if (fromNode === toNode) return;
     const newWire: WireConnection = {
       id: `w-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      from: wireStart,
-      to: nodeId,
+      from: fromNode,
+      to: toNode,
       color: wireColor,
+      ...(customWaypoints && customWaypoints.length >= 2 ? { waypoints: customWaypoints } : {}),
     };
+    const animStyle = getWireAnimationPalette(newWire.from, newWire.to, newWire.color);
+    setWireAnims((prev) => ({ ...prev, [newWire.id]: animStyle }));
+    const timerId = window.setTimeout(() => {
+      wireAnimTimersRef.current.delete(newWire.id);
+      setWireAnims((prev) => {
+        if (!(newWire.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[newWire.id];
+        return next;
+      });
+    }, 1450);
+    wireAnimTimersRef.current.set(newWire.id, timerId);
+
     onChangeCircuit((prev) => {
       const nextWires = [...prev.wires, newWire];
-      if (autoRouteStickyRef.current) {
+      if (!customWaypoints && autoRouteStickyRef.current) {
         const coords = buildPinCoordsMap(prev.components);
         return {
           ...prev,
@@ -454,18 +847,51 @@ export function BreadboardCanvas({
     setWireStart(null);
   };
 
+  const handlePinClick = (nodeId: string, e: React.MouseEvent) => {
+    if (effectivePanMode) return;
+    e.stopPropagation();
+    if (suppressNextClickRef.current) {
+      suppressNextClickRef.current = false;
+      return;
+    }
+    if (!wireStart) {
+      setWireStart(nodeId);
+      soundEngine.playSelect();
+      return;
+    }
+    if (wireStart === nodeId) {
+      setWireStart(null);
+      return;
+    }
+    commitWireConnection(wireStart, nodeId);
+  };
+
   const handleDeleteWire = (wireId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     soundEngine.playSelect();
+    const existingTimer = wireAnimTimersRef.current.get(wireId);
+    if (existingTimer !== undefined) {
+      window.clearTimeout(existingTimer);
+      wireAnimTimersRef.current.delete(wireId);
+    }
+    setWireAnims((prev) => {
+      if (!(wireId in prev)) return prev;
+      const next = { ...prev };
+      delete next[wireId];
+      return next;
+    });
     onChangeCircuit((prev) => ({
       ...prev,
       wires: prev.wires.filter((w) => w.id !== wireId),
     }));
   };
 
-  const handleAddComponent = (kind: ComponentKind) => {
-    soundEngine.playSelect();
-    const offset = (circuit.components.length % 5) * 28;
+  const placeComponentAt = (kind: ComponentKind, rawX: number, rawY: number, isDrop = false) => {
+    if (isDrop) {
+      soundEngine.playWireSnap();
+    } else {
+      soundEngine.playSelect();
+    }
     const defaultVal =
       kind === 'potentiometer'
         ? 512
@@ -476,15 +902,13 @@ export function BreadboardCanvas({
             : kind === 'temp-sensor'
               ? 25
               : 0;
-    const rawX = 465 + offset;
-    const rawY = 140 + (circuit.components.length % 3) * 60;
     const snapped = snapCoord(rawX, rawY);
     const comp: PlacedComponent = {
-      id: `c-${Date.now().toString(36)}`,
+      id: `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`,
       kind,
       x: snapped.x,
       y: snapped.y,
-      label: kind.toUpperCase().replace('-', ' '),
+      label: kind === 'multimeter' ? 'DMM' : kind.toUpperCase().replace('-', ' '),
       value: defaultVal,
     };
     onChangeCircuit((prev) => ({
@@ -492,6 +916,61 @@ export function BreadboardCanvas({
       components: [...prev.components, comp],
     }));
     setSelectedCompId(comp.id);
+  };
+
+  const handleAddComponent = (kind: ComponentKind) => {
+    const offset = (circuit.components.length % 5) * 28;
+    const rawX = 465 + offset;
+    const rawY = 140 + (circuit.components.length % 3) * 60;
+    placeComponentAt(kind, rawX, rawY, false);
+  };
+
+  const isComponentDragEvent = (e: React.DragEvent): boolean => {
+    if (activeDragKind) return true;
+    const types = Array.from(e.dataTransfer?.types || []);
+    return types.includes(ARDUNOLAB_COMPONENT_MIME) || types.includes('text/plain');
+  };
+
+  const handleCanvasDragEnter = (e: React.DragEvent<HTMLDivElement>) => {
+    if (!isComponentDragEvent(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  };
+
+  const handleCanvasDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    if (!isComponentDragEvent(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    const pos = toSvgCoords(e.clientX, e.clientY);
+    const snapped = snapCoord(pos.x, pos.y);
+    const kind = activeDragKind || 'led-red';
+    setDropPreview((prev) =>
+      prev && prev.kind === kind && prev.x === snapped.x && prev.y === snapped.y
+        ? prev
+        : { kind, x: snapped.x, y: snapped.y },
+    );
+  };
+
+  const handleCanvasDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    const nextTarget = e.relatedTarget as Node | null;
+    if (nextTarget && e.currentTarget.contains(nextTarget)) return;
+    setDropPreview(null);
+  };
+
+  const handleCanvasDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    if (!isComponentDragEvent(e)) return;
+    e.preventDefault();
+    const rawKind =
+      e.dataTransfer.getData(ARDUNOLAB_COMPONENT_MIME) ||
+      e.dataTransfer.getData('text/plain') ||
+      activeDragKind ||
+      '';
+    setDropPreview(null);
+    setPaletteDragKind(null);
+    onDropLibraryEnd?.();
+    if (!(rawKind in COMPONENT_PINS)) return;
+    const pos = toSvgCoords(e.clientX, e.clientY);
+    placeComponentAt(rawKind as ComponentKind, pos.x, pos.y, true);
   };
 
   const handleRemoveComponent = (compId: string) => {
@@ -556,6 +1035,35 @@ export function BreadboardCanvas({
       (e.currentTarget as SVGSVGElement).setPointerCapture?.(e.pointerId);
       return;
     }
+    // Interactive Wiring Tool: click-and-drag from any pin or breadboard hole with snap-to-grid
+    if (wiringToolActive && !effectivePanMode && e.button === 0) {
+      const pos = toSvgCoords(e.clientX, e.clientY);
+      const found = findNearestConnectableNode(pos.x, pos.y, undefined, 13);
+      if (found) {
+        e.stopPropagation();
+        try {
+          (e.currentTarget as SVGSVGElement).setPointerCapture?.(e.pointerId);
+        } catch {
+          // ignore if capture is unavailable
+        }
+        setTooltipTarget(null);
+        setDragWire({
+          fromNodeId: found.id,
+          startPt: found.pt,
+          corners: [found.pt],
+          axis: null,
+          cursorSnapped: found.pt,
+          targetNodeId: null,
+          hasDragged: false,
+          pointerId: e.pointerId,
+        });
+        setHoverNodeId(found.id);
+        soundEngine.playSelect();
+        return;
+      }
+      // Keep left-click canvas stable while aiming in Wiring Tool mode
+      return;
+    }
     // Allow panning when Pan tool is active, middle mouse button, or dragging empty canvas/board surface
     const targetTag = (e.target as Element)?.getAttribute?.('data-pan-surface');
     if (effectivePanMode || e.button === 1 || targetTag === 'true') {
@@ -571,6 +1079,7 @@ export function BreadboardCanvas({
   };
 
   const handleSvgDoubleClick = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (wiringToolActive) return;
     const targetTag = (e.target as Element)?.getAttribute?.('data-pan-surface');
     if (targetTag !== 'true') return;
     soundEngine.playSelect();
@@ -657,9 +1166,92 @@ export function BreadboardCanvas({
     }
 
     const pos = toSvgCoords(e.clientX, e.clientY);
-    if (wireStart) {
+
+    // Live click-and-drag grid-snapped wire path drawing
+    if (dragWire) {
+      const target = findNearestConnectableNode(pos.x, pos.y, dragWire.fromNodeId, 13);
+      const snapped = target ? target.pt : snapWireGridPoint(pos.x, pos.y);
+      setHoverNodeId(target?.id ?? null);
+      setDragWire((prev) => {
+        if (!prev) return null;
+        const hasDragged =
+          prev.hasDragged || Math.hypot(pos.x - prev.startPt.x, pos.y - prev.startPt.y) >= 6;
+        let corners = [...prev.corners];
+        let axis = prev.axis;
+        const anchor = corners[corners.length - 1] ?? prev.startPt;
+        const dx = snapped.x - anchor.x;
+        const dy = snapped.y - anchor.y;
+        const turnThreshold = Math.max(10, gridStep);
+        const backtrackRadius = Math.max(8, gridStep * 0.75);
+
+        if (axis === null) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) >= Math.max(8, gridStep * 0.6)) {
+            axis = Math.abs(dx) >= Math.abs(dy) ? 'h' : 'v';
+          }
+        } else if (axis === 'h') {
+          if (
+            corners.length > 1 &&
+            Math.hypot(snapped.x - corners[corners.length - 2].x, snapped.y - corners[corners.length - 2].y) <
+              backtrackRadius
+          ) {
+            corners.pop();
+            axis = 'v';
+          } else if (Math.abs(dy) >= turnThreshold && Math.abs(dx) >= 4) {
+            const turnPt: WirePoint = { x: snapped.x, y: anchor.y };
+            if (Math.hypot(turnPt.x - anchor.x, turnPt.y - anchor.y) >= 4) {
+              corners.push(turnPt);
+            }
+            axis = 'v';
+          }
+        } else if (axis === 'v') {
+          if (
+            corners.length > 1 &&
+            Math.hypot(snapped.x - corners[corners.length - 2].x, snapped.y - corners[corners.length - 2].y) <
+              backtrackRadius
+          ) {
+            corners.pop();
+            axis = 'h';
+          } else if (Math.abs(dx) >= turnThreshold && Math.abs(dy) >= 4) {
+            const turnPt: WirePoint = { x: anchor.x, y: snapped.y };
+            if (Math.hypot(turnPt.x - anchor.x, turnPt.y - anchor.y) >= 4) {
+              corners.push(turnPt);
+            }
+            axis = 'h';
+          }
+        }
+
+        if (corners.length > 14) {
+          corners = simplifyOrthogonalPoints(corners);
+        }
+
+        return {
+          ...prev,
+          corners,
+          axis,
+          cursorSnapped: snapped,
+          targetNodeId: target?.id ?? null,
+          hasDragged,
+        };
+      });
+      return;
+    }
+
+    if ((wiringToolActive || wireStart) && !effectivePanMode && !draggingId) {
+      const hovered = findNearestConnectableNode(pos.x, pos.y, wireStart ?? undefined, 12);
+      setHoverNodeId(hovered?.id ?? null);
+      if (wireStart) {
+        setCursorPt(
+          hovered
+            ? hovered.pt
+            : wiringToolActive
+              ? snapWireGridPoint(pos.x, pos.y)
+              : pos,
+        );
+      }
+    } else if (wireStart) {
       setCursorPt(pos);
     }
+
     if (draggingId && !effectivePanMode) {
       const snapped = snapCoord(pos.x, pos.y);
       onChangeCircuit((prev) => ({
@@ -696,6 +1288,30 @@ export function BreadboardCanvas({
         return;
       }
     }
+    if (dragWire) {
+      try {
+        (e.currentTarget as SVGSVGElement).releasePointerCapture?.(dragWire.pointerId);
+      } catch {
+        // ignore if already released
+      }
+      if (dragWire.targetNodeId && dragWire.targetNodeId !== dragWire.fromNodeId) {
+        const waypoints = buildDragWireWaypoints(dragWire);
+        commitWireConnection(dragWire.fromNodeId, dragWire.targetNodeId, waypoints);
+        suppressNextClickRef.current = true;
+      } else if (!dragWire.hasDragged) {
+        // Short click fallback: start or finish click-to-wire seamlessly
+        if (wireStart && wireStart !== dragWire.fromNodeId) {
+          commitWireConnection(wireStart, dragWire.fromNodeId);
+        } else {
+          setWireStart((prev) => (prev === dragWire.fromNodeId ? null : dragWire.fromNodeId));
+        }
+        suppressNextClickRef.current = true;
+      } else {
+        suppressNextClickRef.current = true;
+      }
+      setDragWire(null);
+      return;
+    }
     if (panDragRef.current.active) {
       panDragRef.current.active = false;
     }
@@ -728,9 +1344,48 @@ export function BreadboardCanvas({
     return `M ${x1} ${y1} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${x2} ${y2}`;
   };
 
-  // Interactive sensor/input components present on the breadboard
+  // Compute real-time directional electric current flows while simulation is running
+  const currentFlowMap = useMemo(
+    () =>
+      computeCircuitCurrentFlow({
+        circuit,
+        running: running && currentFlowEnabled,
+        pinValues,
+        pinModes,
+        componentPower,
+        buzzerTone,
+        servoAngles,
+      }),
+    [
+      circuit,
+      running,
+      currentFlowEnabled,
+      pinValues,
+      pinModes,
+      componentPower,
+      buzzerTone,
+      servoAngles,
+    ],
+  );
+
+  // Compute live readings for any placed Virtual Digital Multimeters (V / mA / Ω)
+  const multimeterReadings = useMemo(
+    () =>
+      computeMultimeterReadings({
+        circuit,
+        running,
+        pinValues,
+        pinModes,
+        componentPower,
+        buzzerTone,
+        servoAngles,
+      }),
+    [circuit, running, pinValues, pinModes, componentPower, buzzerTone, servoAngles],
+  );
+
+  // Interactive sensor/input & test instrument components present on the breadboard
   const interactiveInputs = circuit.components.filter((c) =>
-    ['button', 'potentiometer', 'ldr', 'ultrasonic', 'temp-sensor'].includes(c.kind),
+    ['button', 'potentiometer', 'ldr', 'ultrasonic', 'temp-sensor', 'multimeter'].includes(c.kind),
   );
 
   // Overloaded components & global rail short-circuit detection
@@ -802,8 +1457,8 @@ export function BreadboardCanvas({
     <div className="flex flex-col h-full bg-slate-50 dark:bg-[#0D1424] rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
       {/* Top Wiring Toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827]">
-        {/* Wire Color Picker */}
-        <div className="flex items-center gap-2">
+        {/* Wire Color Picker & Wiring Tool Toggle */}
+        <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs font-semibold text-slate-600 dark:text-slate-400">
             {tLoc(translations.simulator.wireColor, lang)}:
           </span>
@@ -827,13 +1482,46 @@ export function BreadboardCanvas({
               />
             ))}
           </div>
-          {wireStart && (
+
+          <span className="w-px h-4 bg-slate-200 dark:bg-slate-700 mx-0.5" />
+
+          {/* Interactive Click-and-Drag Wiring Tool Toggle (Shortcut: W) */}
+          <button
+            type="button"
+            aria-pressed={wiringToolActive}
+            onClick={toggleWiringTool}
+            title={tLoc(translations.simulator.wiringToolTooltip, lang)}
+            className={cn(
+              'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold border transition-colors whitespace-nowrap shrink-0 cursor-pointer',
+              wiringToolActive
+                ? 'bg-[#00878F] text-white border-[#00878F] shadow-sm hover:bg-[#00737a]'
+                : 'bg-white dark:bg-slate-800/80 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:border-[#00878F] hover:text-[#00878F] dark:hover:text-[#22c6cf]',
+            )}
+          >
+            <Cable className="w-3.5 h-3.5 shrink-0" />
+            <span>{tLoc(translations.simulator.wiringTool, lang)}</span>
+            <kbd
+              className={cn(
+                'hidden sm:inline-block px-1 rounded text-[10px] font-mono leading-tight',
+                wiringToolActive
+                  ? 'bg-white/20 text-white'
+                  : 'bg-slate-100 dark:bg-slate-700/80 text-slate-500 dark:text-slate-300',
+              )}
+            >
+              W
+            </kbd>
+          </button>
+
+          {(wireStart || dragWire) && (
             <button
               type="button"
-              onClick={() => setWireStart(null)}
-              className="text-xs font-medium text-amber-600 dark:text-amber-400 hover:underline ms-1 cursor-pointer"
+              onClick={() => {
+                setWireStart(null);
+                setDragWire(null);
+              }}
+              className="text-xs font-medium text-amber-600 dark:text-amber-400 hover:underline ms-1 whitespace-nowrap cursor-pointer"
             >
-              Cancel Wire
+              {tLoc(translations.simulator.wiringToolCancel, lang)}
             </button>
           )}
         </div>
@@ -988,6 +1676,10 @@ export function BreadboardCanvas({
       <div
         ref={canvasWrapRef}
         tabIndex={0}
+        onDragEnter={handleCanvasDragEnter}
+        onDragOver={handleCanvasDragOver}
+        onDragLeave={handleCanvasDragLeave}
+        onDrop={handleCanvasDrop}
         onKeyDown={(e) => {
           if (e.key === '+' || e.key === '=') {
             e.preventDefault();
@@ -1005,11 +1697,130 @@ export function BreadboardCanvas({
           } else if (e.key === 'r' || e.key === 'R') {
             e.preventDefault();
             handleAutoRoute();
+          } else if (e.key === 't' || e.key === 'T') {
+            e.preventDefault();
+            soundEngine.playSelect();
+            setSmartTooltipsEnabled((v) => !v);
+          } else if (e.key === 'c' || e.key === 'C') {
+            e.preventDefault();
+            soundEngine.playSelect();
+            setCurrentFlowEnabled((v) => !v);
+          } else if (e.key === 'w' || e.key === 'W') {
+            e.preventDefault();
+            toggleWiringTool();
+          } else if (e.key === 'Escape') {
+            if (dragWire || wireStart) {
+              e.preventDefault();
+              soundEngine.playSelect();
+              setDragWire(null);
+              setWireStart(null);
+            } else if (wiringToolActive) {
+              e.preventDefault();
+              soundEngine.playSelect();
+              setWiringToolActive(false);
+              setHoverNodeId(null);
+            }
           }
         }}
-        className="relative flex-1 min-h-[340px] w-full overflow-hidden select-none focus:outline-none"
+        className={cn(
+          'relative flex-1 min-h-[340px] w-full overflow-hidden select-none focus:outline-none transition-shadow',
+          activeDragKind && 'ring-2 ring-inset ring-[#00878F]/50',
+        )}
         dir="ltr"
       >
+        {/* Floating Live Current Flow Direction HUD (visible while simulation is running) */}
+        {running && currentFlowEnabled && (
+          <div
+            dir={lang === 'ar' ? 'rtl' : 'ltr'}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+            className="absolute top-2.5 left-2.5 z-10 flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-[#111827]/95 px-2 py-1.5 shadow-md max-w-[calc(100%-220px)]"
+          >
+            {/* Conventional (+ -> -) vs Electron Flow (- -> +) Segmented Switch */}
+            <div className="flex items-center rounded-md bg-slate-100 dark:bg-slate-900 p-0.5 border border-slate-200/80 dark:border-slate-800">
+              <button
+                type="button"
+                aria-pressed={flowMode === 'conventional'}
+                onClick={() => {
+                  soundEngine.playSelect();
+                  setFlowMode('conventional');
+                }}
+                className={cn(
+                  'px-2 py-0.5 rounded text-[11px] font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer',
+                  flowMode === 'conventional'
+                    ? 'bg-amber-500 text-slate-950 shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white',
+                )}
+              >
+                {tLoc(translations.simulator.currentConventional, lang)}
+              </button>
+              <button
+                type="button"
+                aria-pressed={flowMode === 'electrons'}
+                onClick={() => {
+                  soundEngine.playSelect();
+                  setFlowMode('electrons');
+                }}
+                className={cn(
+                  'px-2 py-0.5 rounded text-[11px] font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer',
+                  flowMode === 'electrons'
+                    ? 'bg-cyan-500 text-slate-950 shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white',
+                )}
+              >
+                {tLoc(translations.simulator.currentElectrons, lang)}
+              </button>
+            </div>
+
+            {/* Quiet Unboxed Telemetry & Directional Legend */}
+            <div className="hidden sm:flex items-center gap-2 text-[11px] text-slate-600 dark:text-slate-300 whitespace-nowrap">
+              {currentFlowMap.activeWireCount > 0 ? (
+                <>
+                  <span className="inline-flex items-center gap-1 font-medium">
+                    <span
+                      aria-hidden="true"
+                      className={
+                        flowMode === 'electrons'
+                          ? 'text-cyan-500 font-bold'
+                          : 'text-amber-500 font-bold'
+                      }
+                    >
+                      ▸
+                    </span>
+                    <span>{tLoc(translations.simulator.currentLegendPower, lang)}</span>
+                  </span>
+                  <span aria-hidden="true" className="text-slate-300 dark:text-slate-700">
+                    ·
+                  </span>
+                  <span className="inline-flex items-center gap-1 font-medium">
+                    <span aria-hidden="true" className="text-sky-500 font-bold">
+                      ▸
+                    </span>
+                    <span>{tLoc(translations.simulator.currentLegendSignal, lang)}</span>
+                  </span>
+                  {currentFlowMap.totalCurrentMa > 0 && (
+                    <>
+                      <span aria-hidden="true" className="text-slate-300 dark:text-slate-700">
+                        ·
+                      </span>
+                      <span
+                        dir="ltr"
+                        className="font-mono tabular-nums font-bold text-slate-800 dark:text-slate-100"
+                      >
+                        {currentFlowMap.totalCurrentMa} mA
+                      </span>
+                    </>
+                  )}
+                </>
+              ) : (
+                <span className="text-slate-500 dark:text-slate-400">
+                  {tLoc(translations.simulator.currentIdleNote, lang)}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Floating Zoom, Pan & Snap Grid Control Bar */}
         <div
           className="absolute top-2.5 right-2.5 z-10 flex items-center gap-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-[#111827]/95 p-1 shadow-md"
@@ -1047,7 +1858,14 @@ export function BreadboardCanvas({
             type="button"
             onClick={() => {
               soundEngine.playSelect();
-              setPanMode((p) => !p);
+              setPanMode((p) => {
+                const next = !p;
+                if (next) {
+                  setWiringToolActive(false);
+                  setDragWire(null);
+                }
+                return next;
+              });
             }}
             title={tLoc(translations.simulator.panTool, lang)}
             className={cn(
@@ -1091,6 +1909,48 @@ export function BreadboardCanvas({
             </button>
           )}
 
+          <span className="w-px h-4 bg-slate-200 dark:bg-slate-700 mx-0.5" />
+
+          {/* Smart Component Tooltips Toggle */}
+          <button
+            type="button"
+            onClick={() => {
+              soundEngine.playSelect();
+              setSmartTooltipsEnabled((v) => !v);
+            }}
+            aria-pressed={smartTooltipsEnabled}
+            title={tLoc(translations.simulator.smartTooltips, lang)}
+            className={cn(
+              'p-1.5 rounded-md transition-colors cursor-pointer',
+              smartTooltipsEnabled
+                ? 'bg-[#00878F] text-white'
+                : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800',
+            )}
+          >
+            <MessageSquareText className="w-3.5 h-3.5" />
+          </button>
+
+          {/* Live Electric Current Flow Visualization Toggle */}
+          <button
+            type="button"
+            onClick={() => {
+              soundEngine.playSelect();
+              setCurrentFlowEnabled((v) => !v);
+            }}
+            aria-pressed={currentFlowEnabled}
+            title={tLoc(translations.simulator.currentFlowToggle, lang)}
+            className={cn(
+              'p-1.5 rounded-md transition-colors cursor-pointer',
+              currentFlowEnabled
+                ? running
+                  ? 'bg-amber-500 text-slate-950 shadow-xs'
+                  : 'bg-[#00878F] text-white'
+                : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800',
+            )}
+          >
+            <Zap className="w-3.5 h-3.5" />
+          </button>
+
           {(view.zoom !== 1 || view.panX !== 0 || view.panY !== 0) && (
             <button
               type="button"
@@ -1111,16 +1971,30 @@ export function BreadboardCanvas({
           viewBox={`${vbX} ${vbY} ${vbW} ${vbH}`}
           className={cn(
             'w-full h-full touch-none',
-            effectivePanMode ? 'cursor-grab active:cursor-grabbing' : '',
+            effectivePanMode
+              ? 'cursor-grab active:cursor-grabbing'
+              : wiringToolActive
+                ? 'cursor-crosshair'
+                : '',
           )}
           onPointerDownCapture={handleSvgPointerDownCapture}
           onPointerDown={handleSvgPointerDown}
           onPointerMove={handleSvgPointerMove}
           onPointerUp={handleSvgPointerUp}
           onPointerCancel={handleSvgPointerUp}
-          onPointerLeave={handleSvgPointerUp}
+          onPointerLeave={(e) => {
+            setTooltipTarget(null);
+            if (!dragWire) {
+              setHoverNodeId(null);
+              handleSvgPointerUp(e);
+            }
+          }}
           onDoubleClick={handleSvgDoubleClick}
           onClick={() => {
+            if (suppressNextClickRef.current) {
+              suppressNextClickRef.current = false;
+              return;
+            }
             setWireStart(null);
             setSelectedCompId(null);
           }}
@@ -1168,6 +2042,13 @@ export function BreadboardCanvas({
             </filter>
             <filter id="overload-glow" x="-60%" y="-60%" width="220%" height="220%">
               <feGaussianBlur stdDeviation="4.5" result="blur" />
+              <feMerge>
+                <feMergeNode in="blur" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+            <filter id="wire-pulse-glow" x="-40%" y="-40%" width="180%" height="180%">
+              <feGaussianBlur stdDeviation="3.2" result="blur" />
               <feMerge>
                 <feMergeNode in="blur" />
                 <feMergeNode in="SourceGraphic" />
@@ -1251,28 +2132,60 @@ export function BreadboardCanvas({
                 R3 · ATmega328P
               </text>
 
-              {/* ATmega328P DIP Chip */}
-              <rect
-                x="118"
-                y="165"
-                width="76"
-                height="168"
-                rx="4"
-                fill="#1e293b"
-                stroke="#0f172a"
-                strokeWidth="1.5"
-              />
-              <text
-                x="156"
-                y="252"
-                textAnchor="middle"
-                fill="#94a3b8"
-                fontSize="9"
-                fontFamily="monospace"
-                transform="rotate(-90 156 252)"
+              {/* ATmega328P DIP Chip (Hover for Smart Arduino Board Tooltip) */}
+              <g
+                className={smartTooltipsEnabled ? 'cursor-help' : undefined}
+                onPointerEnter={(e) => {
+                  if (
+                    !smartTooltipsEnabled ||
+                    e.pointerType !== 'mouse' ||
+                    draggingId ||
+                    wireStart ||
+                    activeDragKind ||
+                    panDragRef.current.active
+                  ) {
+                    return;
+                  }
+                  setTooltipTarget({
+                    kind: 'arduino',
+                    clientX: e.clientX,
+                    clientY: e.clientY,
+                  });
+                }}
+                onPointerMove={(e) => {
+                  if (!smartTooltipsEnabled || e.pointerType !== 'mouse') return;
+                  setTooltipTarget((prev) =>
+                    prev && prev.kind === 'arduino'
+                      ? { kind: 'arduino', clientX: e.clientX, clientY: e.clientY }
+                      : prev,
+                  );
+                }}
+                onPointerLeave={() => {
+                  setTooltipTarget((prev) => (prev?.kind === 'arduino' ? null : prev));
+                }}
               >
-                ATMEGA328P-PU
-              </text>
+                <rect
+                  x="118"
+                  y="165"
+                  width="76"
+                  height="168"
+                  rx="4"
+                  fill="#1e293b"
+                  stroke={tooltipTarget?.kind === 'arduino' ? '#22c6cf' : '#0f172a'}
+                  strokeWidth={tooltipTarget?.kind === 'arduino' ? '2' : '1.5'}
+                />
+                <text
+                  x="156"
+                  y="252"
+                  textAnchor="middle"
+                  fill="#94a3b8"
+                  fontSize="9"
+                  fontFamily="monospace"
+                  transform="rotate(-90 156 252)"
+                >
+                  ATMEGA328P-PU
+                </text>
+              </g>
 
               {/* On-board Power LED (ON) & L (D13) LED */}
               <circle cx="100" cy="146" r="4.5" fill={running ? '#22c55e' : '#14532d'} />
@@ -1429,58 +2342,170 @@ export function BreadboardCanvas({
           })}
 
           {/* ================= HALF-SIZE BREADBOARD (RIGHT ZONE) ================= */}
-          {viewMode === 'breadboard' ? (
-            <g>
-              <rect
-                x="348"
-                y="42"
-                width="396"
-                height="332"
-                rx="10"
-                fill="#f8fafc"
-                stroke="#cbd5e1"
-                strokeWidth="2"
-                data-pan-surface="true"
-              />
-              {/* Top Power Rail (+5V red / GND blue) */}
-              <line x1="368" y1="62" x2="724" y2="62" stroke="#ef4444" strokeWidth="2" />
-              <line x1="368" y1="76" x2="724" y2="76" stroke="#2563eb" strokeWidth="2" />
-              <text x="355" y="65" fill="#ef4444" fontSize="11" fontWeight="bold">
-                +
-              </text>
-              <text x="355" y="79" fill="#2563eb" fontSize="12" fontWeight="bold">
-                -
-              </text>
+          {viewMode === 'breadboard' ? (() => {
+            const activeStripKey =
+              BREADBOARD_POINT_MAP.get(dragWire?.targetNodeId ?? '')?.stripKey ??
+              BREADBOARD_POINT_MAP.get(hoverNodeId ?? '')?.stripKey ??
+              BREADBOARD_POINT_MAP.get(dragWire?.fromNodeId ?? '')?.stripKey ??
+              BREADBOARD_POINT_MAP.get(wireStart ?? '')?.stripKey ??
+              null;
+            const showBbInteractive = wiringToolActive || Boolean(wireStart) || Boolean(dragWire);
+            return (
+              <g>
+                <rect
+                  x="348"
+                  y="42"
+                  width="396"
+                  height="332"
+                  rx="10"
+                  fill="#f8fafc"
+                  stroke="#cbd5e1"
+                  strokeWidth="2"
+                  data-pan-surface="true"
+                />
+                {/* Top Power Rail (+5V red / GND blue) */}
+                <line
+                  x1="368"
+                  y1="62"
+                  x2="724"
+                  y2="62"
+                  stroke="#ef4444"
+                  strokeWidth={activeStripKey === 'rail:pos:top' ? '4.5' : '2'}
+                  strokeOpacity={activeStripKey === 'rail:pos:top' ? '0.85' : '1'}
+                />
+                <line
+                  x1="368"
+                  y1="76"
+                  x2="724"
+                  y2="76"
+                  stroke="#2563eb"
+                  strokeWidth={activeStripKey === 'rail:neg:top' ? '4.5' : '2'}
+                  strokeOpacity={activeStripKey === 'rail:neg:top' ? '0.85' : '1'}
+                />
+                <text x="355" y="65" fill="#ef4444" fontSize="11" fontWeight="bold">
+                  +
+                </text>
+                <text x="355" y="79" fill="#2563eb" fontSize="12" fontWeight="bold">
+                  -
+                </text>
 
-              {/* Center DIP Valley */}
-              <rect x="366" y="200" width="360" height="14" rx="3" fill="#e2e8f0" />
+                {/* Center DIP Valley */}
+                <rect x="366" y="200" width="360" height="14" rx="3" fill="#e2e8f0" />
 
-              {/* Breadboard Hole Matrix */}
-              {Array.from({ length: 24 }).map((_, col) => {
-                const cx = 376 + col * 14.8;
-                return (
-                  <g key={col}>
-                    {[96, 114, 132, 150, 168, 228, 246, 264, 282, 300].map((cy) => (
-                      <rect
-                        key={cy}
-                        x={cx - 2.2}
-                        y={cy - 2.2}
-                        width="4.4"
-                        height="4.4"
-                        rx="0.8"
-                        fill="#475569"
-                        fillOpacity="0.48"
-                      />
-                    ))}
-                  </g>
-                );
-              })}
+                {/* Active 5-Hole Vertical Copper Strip Highlight when Wiring */}
+                {activeStripKey && activeStripKey.startsWith('col:') && (() => {
+                  const [, colStr, half] = activeStripKey.split(':');
+                  const colNum = Number(colStr);
+                  const cx = Number((376 + colNum * 14.8).toFixed(1));
+                  const sy = half === 'top' ? 89 : 221;
+                  return (
+                    <rect
+                      x={cx - 5.5}
+                      y={sy}
+                      width="11"
+                      height="86"
+                      rx="5.5"
+                      fill="#00878F"
+                      fillOpacity="0.18"
+                      stroke="#00878F"
+                      strokeOpacity="0.72"
+                      strokeWidth="1.2"
+                      pointerEvents="none"
+                      data-export-exclude="true"
+                    />
+                  );
+                })()}
 
-              {/* Bottom Power Rail */}
-              <line x1="368" y1="336" x2="724" y2="336" stroke="#ef4444" strokeWidth="2" />
-              <line x1="368" y1="352" x2="724" y2="352" stroke="#2563eb" strokeWidth="2" />
-            </g>
-          ) : (
+                {/* Bottom Power Rail */}
+                <line
+                  x1="368"
+                  y1="336"
+                  x2="724"
+                  y2="336"
+                  stroke="#ef4444"
+                  strokeWidth={activeStripKey === 'rail:pos:bot' ? '4.5' : '2'}
+                  strokeOpacity={activeStripKey === 'rail:pos:bot' ? '0.85' : '1'}
+                />
+                <line
+                  x1="368"
+                  y1="352"
+                  x2="724"
+                  y2="352"
+                  stroke="#2563eb"
+                  strokeWidth={activeStripKey === 'rail:neg:bot' ? '4.5' : '2'}
+                  strokeOpacity={activeStripKey === 'rail:neg:bot' ? '0.85' : '1'}
+                />
+
+                {/* Interactive Breadboard Holes & Power Rail Sockets */}
+                {BREADBOARD_POINTS.map((bp) => {
+                  const isStart = wireStart === bp.id || dragWire?.fromNodeId === bp.id;
+                  const isTarget = dragWire?.targetNodeId === bp.id;
+                  const isHoveredPt = hoverNodeId === bp.id;
+                  const isRail = bp.kind !== 'hole';
+                  const inActiveStrip = activeStripKey === bp.stripKey;
+                  return (
+                    <g
+                      key={bp.id}
+                      className={showBbInteractive ? 'cursor-crosshair' : 'cursor-pointer'}
+                      onClick={(e) => handlePinClick(bp.id, e)}
+                    >
+                      {isRail ? (
+                        <circle
+                          cx={bp.x}
+                          cy={bp.y}
+                          r={isStart || isTarget ? 3.8 : isHoveredPt ? 3.2 : showBbInteractive ? 2.5 : 2}
+                          fill={
+                            isStart
+                              ? '#f59e0b'
+                              : isTarget
+                                ? '#22c55e'
+                                : bp.kind === 'rail-pos'
+                                  ? '#dc2626'
+                                  : '#1d4ed8'
+                          }
+                          fillOpacity={isStart || isTarget || isHoveredPt || inActiveStrip ? '0.98' : '0.72'}
+                          stroke={isStart || isTarget || isHoveredPt ? '#ffffff' : 'none'}
+                          strokeWidth="1"
+                        />
+                      ) : (
+                        <rect
+                          x={bp.x - (isStart || isTarget ? 3.2 : 2.2)}
+                          y={bp.y - (isStart || isTarget ? 3.2 : 2.2)}
+                          width={isStart || isTarget ? 6.4 : 4.4}
+                          height={isStart || isTarget ? 6.4 : 4.4}
+                          rx={isStart || isTarget ? 1.4 : 0.8}
+                          fill={
+                            isStart
+                              ? '#f59e0b'
+                              : isTarget
+                                ? '#10b981'
+                                : isHoveredPt
+                                  ? '#00878F'
+                                  : inActiveStrip
+                                    ? '#0f766e'
+                                    : '#475569'
+                          }
+                          fillOpacity={isStart || isTarget || isHoveredPt ? '1' : inActiveStrip ? '0.82' : '0.48'}
+                        />
+                      )}
+                      {(isHoveredPt || isTarget) && showBbInteractive && (
+                        <circle
+                          cx={bp.x}
+                          cy={bp.y}
+                          r="6.2"
+                          fill="none"
+                          stroke={isTarget ? '#10b981' : '#00878F'}
+                          strokeWidth="1.4"
+                          pointerEvents="none"
+                          data-export-exclude="true"
+                        />
+                      )}
+                    </g>
+                  );
+                })}
+              </g>
+            );
+          })() : (
             <g>
               <rect
                 x="348"
@@ -1598,6 +2623,8 @@ export function BreadboardCanvas({
             const pins = COMPONENT_PINS[comp.kind] || [];
             const pwr = componentPower[comp.id];
             const isSelected = selectedCompId === comp.id;
+            const isTooltipHovered =
+              tooltipTarget?.kind === 'component' && tooltipTarget.compId === comp.id;
 
             // Find servo angle if servo is driven
             let servoAngle = 90;
@@ -1610,30 +2637,73 @@ export function BreadboardCanvas({
               <g
                 key={comp.id}
                 transform={`translate(${comp.x}, ${comp.y})`}
-                className={effectivePanMode ? 'cursor-grab active:cursor-grabbing' : 'cursor-move'}
+                className={
+                  effectivePanMode
+                    ? 'cursor-grab active:cursor-grabbing'
+                    : wiringToolActive
+                      ? 'cursor-crosshair'
+                      : 'cursor-move'
+                }
+                onPointerEnter={(e) => {
+                  if (
+                    !smartTooltipsEnabled ||
+                    e.pointerType !== 'mouse' ||
+                    draggingId ||
+                    wireStart ||
+                    dragWire ||
+                    activeDragKind ||
+                    panDragRef.current.active
+                  ) {
+                    return;
+                  }
+                  setTooltipTarget({
+                    kind: 'component',
+                    compId: comp.id,
+                    clientX: e.clientX,
+                    clientY: e.clientY,
+                  });
+                }}
+                onPointerMove={(e) => {
+                  if (!smartTooltipsEnabled || e.pointerType !== 'mouse') return;
+                  if (draggingId || wireStart || dragWire || activeDragKind || panDragRef.current.active) return;
+                  setTooltipTarget((prev) =>
+                    prev && prev.kind === 'component' && prev.compId === comp.id
+                      ? { kind: 'component', compId: comp.id, clientX: e.clientX, clientY: e.clientY }
+                      : { kind: 'component', compId: comp.id, clientX: e.clientX, clientY: e.clientY },
+                  );
+                }}
+                onPointerLeave={() => {
+                  setTooltipTarget((prev) =>
+                    prev?.kind === 'component' && prev.compId === comp.id ? null : prev,
+                  );
+                }}
                 onPointerDown={(e) => {
                   if (
                     effectivePanMode ||
+                    wiringToolActive ||
                     pinchStateRef.current.active ||
                     activeTouchPointersRef.current.size >= 2
                   ) {
                     return;
                   }
                   e.stopPropagation();
+                  setTooltipTarget(null);
                   setSelectedCompId(comp.id);
                   setDraggingId(comp.id);
                 }}
               >
-                {isSelected && !pwr?.overload && (
+                {(isSelected || isTooltipHovered) && !pwr?.overload && (
                   <rect
                     x="-42"
                     y="-36"
                     width="84"
                     height="72"
                     rx="8"
-                    fill="none"
+                    fill={isTooltipHovered && !isSelected ? '#00878F' : 'none'}
+                    fillOpacity={isTooltipHovered && !isSelected ? '0.07' : undefined}
                     stroke="#00878F"
-                    strokeWidth="1.8"
+                    strokeWidth={isSelected ? '1.8' : '1.4'}
+                    strokeOpacity={isSelected ? '1' : '0.75'}
                     strokeDasharray="4 2"
                   />
                 )}
@@ -1923,11 +2993,268 @@ export function BreadboardCanvas({
                   </g>
                 )}
 
+                {/* VIRTUAL DIGITAL MULTIMETER (DC V / DC mA / Ω) */}
+                {comp.kind === 'multimeter' && (() => {
+                  const mode = getMultimeterModeFromValue(comp.value);
+                  const reading = multimeterReadings[comp.id];
+                  const displayText =
+                    reading?.displayText ??
+                    (mode === 'resistance' ? 'OL' : mode === 'current' ? '0.00 mA' : '0.00 V');
+                  const unitBadge = reading?.unitBadge ?? (mode === 'voltage' ? 'DC V' : mode === 'current' ? 'DC mA' : 'Ω');
+                  const isFuse = reading?.warning === 'fuse-overload';
+                  const isLiveWarn = reading?.warning === 'live-circuit';
+                  const isActiveReading = Boolean(reading?.connected && reading.warning === 'none');
+
+                  const lcdBg = isFuse
+                    ? '#fee2e2'
+                    : isLiveWarn
+                      ? '#fef3c7'
+                      : isActiveReading
+                        ? '#a7f3d0'
+                        : '#cbd5e1';
+                  const lcdText = isFuse
+                    ? '#b91c1c'
+                    : isLiveWarn
+                      ? '#b45309'
+                      : isActiveReading
+                        ? '#064e3b'
+                        : '#334155';
+
+                  const selectMode = (next: MultimeterMode, e: React.MouseEvent) => {
+                    e.stopPropagation();
+                    soundEngine.playSelect();
+                    updateComponentValue(comp.id, getMultimeterValueFromMode(next));
+                  };
+
+                  if (viewMode === 'schematic') {
+                    const symLetter = mode === 'voltage' ? 'V' : mode === 'current' ? 'A' : 'Ω';
+                    return (
+                      <g>
+                        <line x1="-16" y1="12" x2="-16" y2="30" stroke="#dc2626" strokeWidth="2" />
+                        <line x1="16" y1="12" x2="16" y2="30" stroke="#334155" strokeWidth="2" />
+                        <circle
+                          cx="0"
+                          cy="-6"
+                          r="22"
+                          fill="#0f172a"
+                          fillOpacity="0.92"
+                          stroke={isFuse ? '#ef4444' : isLiveWarn ? '#f59e0b' : '#eab308'}
+                          strokeWidth="2"
+                        />
+                        <text
+                          x="0"
+                          y="-11"
+                          textAnchor="middle"
+                          fill="#facc15"
+                          fontSize="11"
+                          fontWeight="800"
+                          fontFamily="monospace"
+                        >
+                          {symLetter}
+                        </text>
+                        <text
+                          x="0"
+                          y="4"
+                          textAnchor="middle"
+                          fill={isFuse ? '#fca5a5' : '#6ee7b7'}
+                          fontSize="7.8"
+                          fontWeight="700"
+                          fontFamily="monospace"
+                        >
+                          {displayText}
+                        </text>
+                      </g>
+                    );
+                  }
+
+                  return (
+                    <g>
+                      {/* Red & Black Test Lead Stubs */}
+                      <line x1="-16" y1="20" x2="-16" y2="30" stroke="#dc2626" strokeWidth="2.8" strokeLinecap="round" />
+                      <line x1="16" y1="20" x2="16" y2="30" stroke="#334155" strokeWidth="2.8" strokeLinecap="round" />
+
+                      {/* Yellow Protective Holster */}
+                      <rect
+                        x="-36"
+                        y="-34"
+                        width="72"
+                        height="58"
+                        rx="7"
+                        fill="#eab308"
+                        stroke="#a16207"
+                        strokeWidth="1.5"
+                      />
+                      {/* Dark Instrument Faceplate */}
+                      <rect
+                        x="-32"
+                        y="-30"
+                        width="64"
+                        height="50"
+                        rx="4.5"
+                        fill="#0f172a"
+                        stroke="#1e293b"
+                        strokeWidth="1"
+                      />
+
+                      {/* Recessed Backlit LCD Panel */}
+                      <rect
+                        x="-28"
+                        y="-26"
+                        width="56"
+                        height="23"
+                        rx="2.5"
+                        fill={lcdBg}
+                        stroke="#334155"
+                        strokeWidth="0.9"
+                      />
+                      <text
+                        x="-25"
+                        y="-19"
+                        textAnchor="start"
+                        fill={lcdText}
+                        fillOpacity="0.85"
+                        fontSize="5.6"
+                        fontWeight="800"
+                        fontFamily="monospace"
+                      >
+                        {unitBadge}
+                      </text>
+                      <text
+                        x="25"
+                        y="-19"
+                        textAnchor="end"
+                        fill={lcdText}
+                        fillOpacity="0.65"
+                        fontSize="5"
+                        fontWeight="700"
+                        fontFamily="monospace"
+                      >
+                        {reading?.connected ? 'AUTO' : 'OPEN'}
+                      </text>
+                      <text
+                        x="0"
+                        y="-7.5"
+                        textAnchor="middle"
+                        fill={lcdText}
+                        fontSize={displayText.length > 7 ? '8.8' : '10.2'}
+                        fontWeight="800"
+                        fontFamily="monospace"
+                      >
+                        {displayText}
+                      </text>
+
+                      {/* Interactive Mode Selector Keys directly on the DMM Face (V / mA / Ω) */}
+                      {(
+                        [
+                          { id: 'voltage' as const, label: 'V', x: -28, w: 17, activeFill: '#00878F' },
+                          { id: 'current' as const, label: 'mA', x: -9, w: 18, activeFill: '#d97706' },
+                          { id: 'resistance' as const, label: 'Ω', x: 11, w: 17, activeFill: '#0284c7' },
+                        ]
+                      ).map((btn) => {
+                        const active = mode === btn.id;
+                        return (
+                          <g
+                            key={btn.id}
+                            className="cursor-pointer"
+                            onPointerDown={(e) => e.stopPropagation()}
+                            onClick={(e) => selectMode(btn.id, e)}
+                          >
+                            <rect
+                              x={btn.x}
+                              y="1"
+                              width={btn.w}
+                              height="12.5"
+                              rx="2.5"
+                              fill={active ? btn.activeFill : '#1e293b'}
+                              stroke={active ? '#f8fafc' : '#475569'}
+                              strokeWidth={active ? '1' : '0.7'}
+                            />
+                            <text
+                              x={btn.x + btn.w / 2}
+                              y="9.6"
+                              textAnchor="middle"
+                              fill={active ? '#ffffff' : '#94a3b8'}
+                              fontSize="6.8"
+                              fontWeight="800"
+                              fontFamily="monospace"
+                            >
+                              {btn.label}
+                            </text>
+                          </g>
+                        );
+                      })}
+
+                      {/* Probe Jack Collars at Bottom Bezel */}
+                      <circle cx="-16" cy="18" r="2.6" fill="#dc2626" stroke="#fca5a5" strokeWidth="0.7" />
+                      <circle cx="16" cy="18" r="2.6" fill="#1e293b" stroke="#94a3b8" strokeWidth="0.7" />
+                    </g>
+                  );
+                })()}
+
+                {/* Live Internal Current Direction Indicator across Active Resistors & LEDs */}
+                {running && currentFlowEnabled && (() => {
+                  const compFlow = currentFlowMap.components[comp.id];
+                  if (!compFlow?.active) return null;
+                  const style = getCurrentFlowPalette(compFlow.category, flowMode);
+                  const isElectrons = flowMode === 'electrons';
+                  const xStart = isElectrons ? compFlow.toX : compFlow.fromX;
+                  const yStart = isElectrons ? compFlow.toY : compFlow.fromY;
+                  const xEnd = isElectrons ? compFlow.fromX : compFlow.toX;
+                  const yEnd = isElectrons ? compFlow.fromY : compFlow.toY;
+                  const flowPathId = `comp-flow-${comp.id}`;
+                  const isResistor = comp.kind.startsWith('resistor-');
+                  const dComp = isResistor
+                    ? `M ${xStart} -12 L ${xEnd} -12`
+                    : `M ${xStart} ${yStart} Q 0 12 ${xEnd} ${yEnd}`;
+                  const angleDeg = xEnd >= xStart ? 0 : 180;
+                  const durSec = compFlow.category === 'overload' ? 0.55 : 1.05;
+                  return (
+                    <g pointerEvents="none" data-export-exclude="true">
+                      <path
+                        id={flowPathId}
+                        d={dComp}
+                        fill="none"
+                        stroke={style.stroke}
+                        strokeOpacity="0.45"
+                        strokeWidth="1.4"
+                        strokeDasharray="3 3"
+                      />
+                      {reducedMotion ? (
+                        <polygon
+                          points="-3.6,-2.5 3.2,0 -3.6,2.5 -1.7,0"
+                          fill={style.arrowFill}
+                          stroke={style.arrowStroke}
+                          strokeWidth="0.85"
+                          transform={`translate(0, ${isResistor ? -12 : 17}) rotate(${angleDeg})`}
+                        />
+                      ) : (
+                        <g key={`${comp.id}-cflow-${flowMode}-${xStart}-${viewMode}`}>
+                          <polygon
+                            points="-3.8,-2.7 3.4,0 -3.8,2.7 -1.8,0"
+                            fill={style.arrowFill}
+                            stroke={style.arrowStroke}
+                            strokeWidth="0.9"
+                            strokeLinejoin="round"
+                          />
+                          <animateMotion
+                            dur={`${durSec}s`}
+                            repeatCount="indefinite"
+                            rotate="auto"
+                            calcMode="linear"
+                          >
+                            <mpath href={`#${flowPathId}`} />
+                          </animateMotion>
+                        </g>
+                      )}
+                    </g>
+                  );
+                })()}
+
                 {/* Component Label */}
                 {comp.label && (
                   <text
                     x="0"
-                    y="40"
+                    y={comp.kind === 'multimeter' ? '-39' : '40'}
                     textAnchor="middle"
                     fill="#64748b"
                     fontSize="8.5"
@@ -1942,27 +3269,48 @@ export function BreadboardCanvas({
                 {pins.map((pin) => {
                   const nodeId = `comp:${comp.id}:${pin.id}`;
                   const isStart = wireStart === nodeId;
+                  const isMeterPos = comp.kind === 'multimeter' && pin.id === 'pos';
+                  const isMeterNeg = comp.kind === 'multimeter' && pin.id === 'neg';
                   return (
                     <g
                       key={pin.id}
                       className="cursor-crosshair"
                       onClick={(e) => handlePinClick(nodeId, e)}
-                      onPointerDown={(e) => e.stopPropagation()}
+                      onPointerDown={(e) => {
+                        if (!wiringToolActive) e.stopPropagation();
+                      }}
                     >
                       <circle
                         cx={pin.dx}
                         cy={pin.dy}
                         r={isStart ? 6.5 : 5}
-                        fill={isStart ? '#f59e0b' : '#0f172a'}
-                        stroke="#22d3ee"
+                        fill={
+                          isStart
+                            ? '#f59e0b'
+                            : isMeterPos
+                              ? '#dc2626'
+                              : isMeterNeg
+                                ? '#1e293b'
+                                : '#0f172a'
+                        }
+                        stroke={
+                          isStart
+                            ? '#fef08a'
+                            : isMeterPos
+                              ? '#fca5a5'
+                              : isMeterNeg
+                                ? '#94a3b8'
+                                : '#22d3ee'
+                        }
                         strokeWidth={isStart ? 2.2 : 1.3}
                       />
                       <text
                         x={pin.dx}
                         y={pin.dy + 13}
                         textAnchor="middle"
-                        fill="#64748b"
+                        fill={isMeterPos ? '#ef4444' : '#64748b'}
                         fontSize="7"
+                        fontWeight={isMeterPos || isMeterNeg ? '700' : undefined}
                         fontFamily="monospace"
                       >
                         {pin.label}
@@ -1993,6 +3341,72 @@ export function BreadboardCanvas({
                 )
               : buildWirePath(p1.x, p1.y, p2.x, p2.y);
             const isHovered = hoveredWireId === wire.id;
+            const activeAnim = wireAnims[wire.id];
+            const wireFlow = running && currentFlowEnabled ? currentFlowMap.wires[wire.id] : undefined;
+            const effectiveFlowDir: 1 | -1 = wireFlow
+              ? flowMode === 'electrons'
+                ? (wireFlow.direction === 1 ? -1 : 1)
+                : wireFlow.direction
+              : 1;
+            const dFlow = wireFlow
+              ? effectiveFlowDir === 1
+                ? d
+                : hasValidWaypoints
+                  ? buildRoundedOrthogonalPath(
+                      [...wire.waypoints!].reverse(),
+                      viewMode === 'schematic' ? 4 : 7,
+                    )
+                  : buildWirePath(p2.x, p2.y, p1.x, p1.y)
+              : d;
+            const flowStyle = wireFlow
+              ? getCurrentFlowPalette(wireFlow.category, flowMode)
+              : null;
+            const flowPathId = `wire-flow-${wire.id}`;
+            const approxWireLen = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+            const chevronCount = approxWireLen > 230 ? 4 : approxWireLen > 120 ? 3 : 2;
+            const midX = (p1.x + p2.x) / 2;
+            const midY = (p1.y + p2.y) / 2 - (viewMode === 'schematic' ? 14 : 26);
+            // Static midpoint & angle for reduced-motion directional chevron fallback
+            const staticMid = (() => {
+              if (!wireFlow) return { x: midX, y: midY, deg: 0 };
+              const startPt = effectiveFlowDir === 1 ? p1 : p2;
+              const endPt = effectiveFlowDir === 1 ? p2 : p1;
+              if (hasValidWaypoints && wire.waypoints!.length >= 2) {
+                const pts = effectiveFlowDir === 1 ? wire.waypoints! : [...wire.waypoints!].reverse();
+                const segIdx = Math.floor((pts.length - 1) / 2);
+                const a = pts[segIdx];
+                const b = pts[Math.min(pts.length - 1, segIdx + 1)];
+                return {
+                  x: (a.x + b.x) / 2,
+                  y: (a.y + b.y) / 2,
+                  deg: (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI,
+                };
+              }
+              if (viewMode === 'schematic') {
+                const sx = Math.round((startPt.x + endPt.x) / 2);
+                return {
+                  x: sx,
+                  y: (startPt.y + endPt.y) / 2,
+                  deg: endPt.y >= startPt.y ? 90 : -90,
+                };
+              }
+              const dx = Math.abs(endPt.x - startPt.x);
+              const lift = Math.min(85, Math.max(24, dx * 0.28));
+              const c1x = startPt.x + (endPt.x >= startPt.x ? dx * 0.25 : -dx * 0.25);
+              const c1y = startPt.y - lift;
+              const c2x = endPt.x - (endPt.x >= startPt.x ? dx * 0.25 : -dx * 0.25);
+              const c2y = endPt.y - lift;
+              // Cubic Bezier midpoint & tangent at t = 0.5
+              const bx = 0.125 * startPt.x + 0.375 * c1x + 0.375 * c2x + 0.125 * endPt.x;
+              const by = 0.125 * startPt.y + 0.375 * c1y + 0.375 * c2y + 0.125 * endPt.y;
+              const tx = 0.75 * (endPt.x - startPt.x + c2x - c1x);
+              const ty = 0.75 * (endPt.y - startPt.y + c2y - c1y);
+              return {
+                x: bx,
+                y: by,
+                deg: (Math.atan2(ty, tx) * 180) / Math.PI,
+              };
+            })();
             return (
               <g
                 key={wire.id}
@@ -2015,19 +3429,52 @@ export function BreadboardCanvas({
                     strokeLinejoin="round"
                   />
                 )}
+                {/* Subtle energized glow halo along wires carrying active current */}
+                {wireFlow && flowStyle && (
+                  <path
+                    d={dFlow}
+                    fill="none"
+                    stroke={flowStyle.glow}
+                    strokeOpacity={wireFlow.category === 'overload' ? '0.45' : '0.24'}
+                    strokeWidth={viewMode === 'schematic' ? 5.6 : 6.8}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    pointerEvents="none"
+                    data-export-exclude="true"
+                  />
+                )}
+                {/* Color-coded establishment glow halo when wire is freshly connected */}
+                {activeAnim && (
+                  <path
+                    d={d}
+                    pathLength={1}
+                    fill="none"
+                    stroke={activeAnim.glowColor}
+                    strokeWidth={viewMode === 'schematic' ? 7 : 8.5}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    filter="url(#wire-pulse-glow)"
+                    className="wire-halo-fade"
+                    data-export-exclude="true"
+                    pointerEvents="none"
+                  />
+                )}
                 {/* Subtle shadow */}
                 <path
                   d={d}
+                  pathLength={activeAnim ? 1 : undefined}
                   fill="none"
                   stroke="#000000"
                   strokeOpacity="0.22"
                   strokeWidth="5"
                   strokeLinecap="round"
                   strokeLinejoin="round"
+                  className={activeAnim ? 'wire-draw-in' : undefined}
                 />
-                {/* Main wire */}
+                {/* Main wire (animates smoothly from start pin to end pin on connection) */}
                 <path
                   d={d}
+                  pathLength={activeAnim ? 1 : undefined}
                   fill="none"
                   stroke={wire.color}
                   strokeWidth={
@@ -2041,22 +3488,157 @@ export function BreadboardCanvas({
                   }
                   strokeLinecap="round"
                   strokeLinejoin="round"
+                  className={activeAnim ? 'wire-draw-in' : undefined}
                 />
+                {/* Live Electric Current Flow Stream + Directional Chevrons while Simulation Runs */}
+                {wireFlow && flowStyle && (
+                  <g data-export-exclude="true" pointerEvents="none">
+                    {/* Oriented reference path for exact curve-following directional chevrons */}
+                    <path id={flowPathId} d={dFlow} fill="none" stroke="none" />
+                    {!reducedMotion && (
+                      <path
+                        d={dFlow}
+                        pathLength={100}
+                        fill="none"
+                        stroke={flowStyle.core}
+                        strokeOpacity={wireFlow.category === 'signal' ? '0.68' : '0.78'}
+                        strokeWidth={viewMode === 'schematic' ? 1.5 : 1.9}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="current-flow-stream"
+                        style={{
+                          animationDuration: `${Math.max(0.4, wireFlow.durationSec * 0.55).toFixed(2)}s`,
+                        }}
+                      />
+                    )}
+                    {reducedMotion ? (
+                      <g transform={`translate(${staticMid.x}, ${staticMid.y}) rotate(${staticMid.deg})`}>
+                        <polygon
+                          points="-4.6,-3.4 4.2,0 -4.6,3.4 -2.2,0"
+                          fill={flowStyle.arrowFill}
+                          stroke={flowStyle.arrowStroke}
+                          strokeWidth="1.05"
+                          strokeLinejoin="round"
+                        />
+                      </g>
+                    ) : (
+                      Array.from({ length: chevronCount }).map((_, idx) => {
+                        const beginOffset = -((idx / chevronCount) * wireFlow.durationSec);
+                        return (
+                          <g
+                            key={`${wire.id}-ch-${idx}-${effectiveFlowDir}-${wireFlow.durationSec}-${viewMode}-${hasValidWaypoints ? 'wp' : 'cv'}`}
+                          >
+                            <polygon
+                              points="-4.4,-3.2 4.0,0 -4.4,3.2 -2.1,0"
+                              fill={flowStyle.arrowFill}
+                              stroke={flowStyle.arrowStroke}
+                              strokeWidth="0.95"
+                              strokeLinejoin="round"
+                            />
+                            <animateMotion
+                              dur={`${wireFlow.durationSec}s`}
+                              begin={`${beginOffset.toFixed(2)}s`}
+                              repeatCount="indefinite"
+                              rotate="auto"
+                              calcMode="linear"
+                            >
+                              <mpath href={`#${flowPathId}`} />
+                            </animateMotion>
+                          </g>
+                        );
+                      })
+                    )}
+                  </g>
+                )}
+                {/* Luminous color-coded continuity pulse wave gliding along the new circuit path */}
+                {activeAnim && (
+                  <g data-export-exclude="true" pointerEvents="none">
+                    <path
+                      d={d}
+                      pathLength={1}
+                      fill="none"
+                      stroke={activeAnim.glowColor}
+                      strokeWidth={viewMode === 'schematic' ? 4.4 : 5.4}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      filter="url(#wire-pulse-glow)"
+                      className="wire-energy-pulse"
+                    />
+                    <path
+                      d={d}
+                      pathLength={1}
+                      fill="none"
+                      stroke={activeAnim.coreColor}
+                      strokeWidth={viewMode === 'schematic' ? 1.8 : 2.2}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="wire-energy-core"
+                    />
+                    {/* Concentric snap-lock ripples at source & destination pins */}
+                    <circle
+                      cx={p1.x}
+                      cy={p1.y}
+                      r="5.5"
+                      fill="none"
+                      stroke={activeAnim.ringColor}
+                      strokeWidth="2"
+                      className="wire-pin-ripple"
+                    />
+                    <circle
+                      cx={p2.x}
+                      cy={p2.y}
+                      r="5.5"
+                      fill="none"
+                      stroke={activeAnim.ringColor}
+                      strokeWidth="2"
+                      className="wire-pin-ripple"
+                      style={{ animationDelay: '0.2s' }}
+                    />
+                    {/* Compact color-coded connection-established tag */}
+                    <g transform={`translate(${Math.max(54, Math.min(BASE_W - 54, midX))}, ${Math.max(20, midY)})`}>
+                      <g className="wire-badge-pop">
+                        <rect
+                          x="-40"
+                          y="-9"
+                          width="80"
+                          height="17"
+                          rx="8.5"
+                          fill="#0f172a"
+                          fillOpacity="0.9"
+                          stroke={activeAnim.ringColor}
+                          strokeWidth="1.1"
+                        />
+                        <circle cx="-29" cy="-0.5" r="3" fill={activeAnim.glowColor} />
+                        <text
+                          x="4"
+                          y="2.5"
+                          textAnchor="middle"
+                          fill="#f8fafc"
+                          fontSize="7.4"
+                          fontWeight="800"
+                          fontFamily="monospace"
+                        >
+                          {activeAnim.tag}
+                        </text>
+                      </g>
+                    </g>
+                  </g>
+                )}
                 <circle
                   cx={p1.x}
                   cy={p1.y}
                   r={isHovered ? 4.4 : 3.2}
                   fill={wire.color}
-                  stroke={isHovered ? '#ffffff' : 'none'}
-                  strokeWidth={isHovered ? 1.2 : 0}
+                  stroke={isHovered || activeAnim ? '#ffffff' : wireFlow && flowStyle ? flowStyle.arrowFill : 'none'}
+                  strokeWidth={isHovered || activeAnim ? 1.2 : wireFlow ? 0.9 : 0}
                 />
                 <circle
                   cx={p2.x}
                   cy={p2.y}
                   r={isHovered ? 4.4 : 3.2}
                   fill={wire.color}
-                  stroke={isHovered ? '#ffffff' : 'none'}
-                  strokeWidth={isHovered ? 1.2 : 0}
+                  stroke={isHovered || activeAnim ? '#ffffff' : wireFlow && flowStyle ? flowStyle.arrowFill : 'none'}
+                  strokeWidth={isHovered || activeAnim ? 1.2 : wireFlow ? 0.9 : 0}
                 />
               </g>
             );
@@ -2160,37 +3742,445 @@ export function BreadboardCanvas({
             </g>
           )}
 
-          {/* Active rubber-band wire preview while wiring */}
-          {wireStart && cursorPt && pinCoords.has(wireStart) && (() => {
-            const p1 = pinCoords.get(wireStart)!;
+          {/* Active click-and-drag grid-snapped wire drawing preview (Wiring Tool) */}
+          {dragWire && (() => {
+            const pts = buildDragWireWaypoints(dragWire);
+            const previewD = buildRoundedOrthogonalPath(pts, viewMode === 'schematic' ? 4 : 6);
+            const targetPt = dragWire.targetNodeId ? pinCoords.get(dragWire.targetNodeId) : null;
+            const endPt = targetPt ?? dragWire.cursorSnapped;
+            const badgeText = dragWire.targetNodeId
+              ? `${formatNodeLabel(dragWire.fromNodeId)} → ${formatNodeLabel(dragWire.targetNodeId)}`
+              : `${Math.round(endPt.x)}, ${Math.round(endPt.y)}`;
+            const badgeW = Math.max(76, Math.min(220, badgeText.length * 5.6 + 18));
+            const badgeX = Math.max(badgeW / 2 + 8, Math.min(BASE_W - badgeW / 2 - 8, endPt.x));
+            const badgeY = endPt.y < 36 ? endPt.y + 22 : endPt.y - 18;
             return (
-              <path
-                d={buildWirePath(p1.x, p1.y, cursorPt.x, cursorPt.y)}
-                fill="none"
-                stroke={wireColor}
-                strokeWidth="2.8"
-                strokeDasharray="6 4"
-                pointerEvents="none"
-              />
+              <g data-export-exclude="true" pointerEvents="none">
+                {/* Snapped Grid Crosshairs while routing freely */}
+                {!targetPt && (
+                  <g stroke="#00878F" strokeOpacity="0.45" strokeWidth="0.9" strokeDasharray="3 3">
+                    <line x1={endPt.x} y1="16" x2={endPt.x} y2="384" />
+                    <line x1="16" y1={endPt.y} x2="754" y2={endPt.y} />
+                  </g>
+                )}
+                {/* Soft wire glow + animated dashed path */}
+                <path
+                  d={previewD}
+                  fill="none"
+                  stroke={targetPt ? '#10b981' : wireColor}
+                  strokeOpacity="0.28"
+                  strokeWidth="7"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d={previewD}
+                  fill="none"
+                  stroke={wireColor}
+                  strokeWidth="3"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeDasharray={targetPt ? undefined : '6 4'}
+                >
+                  {!targetPt && !reducedMotion && (
+                    <animate
+                      attributeName="stroke-dashoffset"
+                      values="20;0"
+                      dur="0.55s"
+                      repeatCount="indefinite"
+                    />
+                  )}
+                </path>
+                {/* Crisp snapped grid corner dots */}
+                {pts.slice(1, -1).map((pt, idx) => (
+                  <circle
+                    key={`dw-c-${idx}`}
+                    cx={pt.x}
+                    cy={pt.y}
+                    r="2.4"
+                    fill="#ffffff"
+                    stroke={wireColor}
+                    strokeWidth="1.5"
+                  />
+                ))}
+                {/* Source pin anchor ring */}
+                <circle
+                  cx={dragWire.startPt.x}
+                  cy={dragWire.startPt.y}
+                  r="6.8"
+                  fill="none"
+                  stroke="#f59e0b"
+                  strokeWidth="1.8"
+                />
+                {/* Magnetic target lock ring or snapped cursor dot */}
+                {targetPt ? (
+                  <g>
+                    <circle
+                      cx={targetPt.x}
+                      cy={targetPt.y}
+                      r="8.5"
+                      fill="#10b981"
+                      fillOpacity="0.22"
+                      stroke="#10b981"
+                      strokeWidth="2"
+                    />
+                    <circle cx={targetPt.x} cy={targetPt.y} r="3.4" fill="#10b981" stroke="#ffffff" strokeWidth="1.2" />
+                  </g>
+                ) : (
+                  <circle
+                    cx={endPt.x}
+                    cy={endPt.y}
+                    r="3.2"
+                    fill="#00878F"
+                    stroke="#ffffff"
+                    strokeWidth="1.2"
+                  />
+                )}
+                {/* Floating endpoint / snapped grid readout pill */}
+                <g transform={`translate(${badgeX}, ${badgeY})`}>
+                  <rect
+                    x={-badgeW / 2}
+                    y="-9"
+                    width={badgeW}
+                    height="17"
+                    rx="4.5"
+                    fill="#0f172a"
+                    fillOpacity="0.92"
+                    stroke={targetPt ? '#10b981' : '#00878F'}
+                    strokeWidth="1.1"
+                  />
+                  <text
+                    x="0"
+                    y="2.6"
+                    textAnchor="middle"
+                    fill={targetPt ? '#6ee7b7' : '#e2e8f0'}
+                    fontSize="7.8"
+                    fontWeight="700"
+                    fontFamily="monospace"
+                  >
+                    {badgeText}
+                  </text>
+                </g>
+              </g>
             );
           })()}
+
+          {/* Active rubber-band wire preview while click-to-wire */}
+          {!dragWire && wireStart && cursorPt && pinCoords.has(wireStart) && (() => {
+            const p1 = pinCoords.get(wireStart)!;
+            const previewD = buildWirePath(p1.x, p1.y, cursorPt.x, cursorPt.y);
+            return (
+              <g data-export-exclude="true" pointerEvents="none">
+                <path
+                  d={previewD}
+                  fill="none"
+                  stroke={wireColor}
+                  strokeOpacity="0.28"
+                  strokeWidth="6.5"
+                  strokeLinecap="round"
+                />
+                <path
+                  d={previewD}
+                  fill="none"
+                  stroke={wireColor}
+                  strokeWidth="2.8"
+                  strokeLinecap="round"
+                  strokeDasharray="6 5"
+                >
+                  <animate
+                    attributeName="stroke-dashoffset"
+                    values="22;0"
+                    dur="0.65s"
+                    repeatCount="indefinite"
+                  />
+                </path>
+              </g>
+            );
+          })()}
+
+          {/* ================= DRAG-AND-DROP BREADBOARD TARGET & LIVE GHOST PREVIEW ================= */}
+          {(activeDragKind || dropPreview) && (
+            <g data-export-exclude="true" pointerEvents="none">
+              {/* Highlighted Breadboard Drop Zone */}
+              <rect
+                x="353"
+                y="46"
+                width="386"
+                height="324"
+                rx="12"
+                fill="#00878F"
+                fillOpacity={dropPreview ? '0.075' : '0.04'}
+                stroke="#00878F"
+                strokeWidth="2"
+                strokeDasharray="7 5"
+              >
+                <animate
+                  attributeName="stroke-dashoffset"
+                  values="0;24"
+                  dur="1.1s"
+                  repeatCount="indefinite"
+                />
+              </rect>
+
+              {/* Idle prompt when dragging starts before cursor enters the breadboard */}
+              {activeDragKind && !dropPreview && (
+                <g transform="translate(546, 208)">
+                  <rect
+                    x="-104"
+                    y="-15"
+                    width="208"
+                    height="30"
+                    rx="8"
+                    fill="#0f172a"
+                    fillOpacity="0.88"
+                    stroke="#00878F"
+                    strokeWidth="1.2"
+                  />
+                  <text
+                    x="0"
+                    y="4"
+                    textAnchor="middle"
+                    fill="#f8fafc"
+                    fontSize="10"
+                    fontWeight="700"
+                    fontFamily="sans-serif"
+                  >
+                    {tLoc(translations.simulator.dropOnBreadboard, lang)}
+                  </text>
+                </g>
+              )}
+
+              {/* Live Snapped Alignment Crosshairs + Ghost Component Silhouette */}
+              {dropPreview && (() => {
+                const ghostPins = COMPONENT_PINS[dropPreview.kind] || [];
+                const ghostKind = dropPreview.kind;
+                return (
+                  <g>
+                    <line
+                      x1={dropPreview.x}
+                      y1="52"
+                      x2={dropPreview.x}
+                      y2="364"
+                      stroke="#00878F"
+                      strokeWidth="1.1"
+                      strokeDasharray="3 3"
+                      strokeOpacity="0.7"
+                    />
+                    <line
+                      x1="358"
+                      y1={dropPreview.y}
+                      x2="734"
+                      y2={dropPreview.y}
+                      stroke="#00878F"
+                      strokeWidth="1.1"
+                      strokeDasharray="3 3"
+                      strokeOpacity="0.7"
+                    />
+
+                    <g transform={`translate(${dropPreview.x}, ${dropPreview.y})`}>
+                      {/* Snapped Target Halo */}
+                      <rect
+                        x="-40"
+                        y="-34"
+                        width="80"
+                        height="68"
+                        rx="8"
+                        fill="#00878F"
+                        fillOpacity="0.1"
+                        stroke="#00878F"
+                        strokeWidth="1.6"
+                        strokeDasharray="4 3"
+                      />
+
+                      {/* Translucent Component Ghost Silhouette */}
+                      <g opacity="0.78">
+                        {isLedKind(ghostKind) && (() => {
+                          const pal = getLedFill(ghostKind);
+                          return (
+                            <g>
+                              <line x1="-10" y1="8" x2="-10" y2="26" stroke="#94a3b8" strokeWidth="2.4" />
+                              <line x1="10" y1="8" x2="10" y2="26" stroke="#94a3b8" strokeWidth="2.4" />
+                              <path
+                                d="M -14 8 L -14 -10 A 14 14 0 0 1 14 -10 L 14 8 Z"
+                                fill={pal.on}
+                                stroke="#0f172a"
+                                strokeWidth="1.2"
+                              />
+                              <rect x="-16" y="5" width="32" height="5" rx="2" fill={pal.off} />
+                            </g>
+                          );
+                        })()}
+                        {ghostKind.startsWith('resistor-') && (() => {
+                          const bands = getResistorBands(ghostKind);
+                          return (
+                            <g>
+                              <line x1="-26" y1="0" x2="26" y2="0" stroke="#94a3b8" strokeWidth="2.4" />
+                              <rect x="-18" y="-7" width="36" height="14" rx="5" fill="#f5deb3" stroke="#b45309" strokeWidth="1.2" />
+                              <rect x="-12" y="-7" width="4" height="14" fill={bands[0]} />
+                              <rect x="-5" y="-7" width="4" height="14" fill={bands[1]} />
+                              <rect x="2" y="-7" width="4" height="14" fill={bands[2]} />
+                              <rect x="10" y="-7" width="3" height="14" fill={bands[3]} />
+                            </g>
+                          );
+                        })()}
+                        {ghostKind === 'button' && (
+                          <g>
+                            <rect x="-20" y="-18" width="40" height="36" rx="5" fill="#334155" stroke="#94a3b8" strokeWidth="1.4" />
+                            <circle cx="0" cy="0" r="11" fill="#1e293b" stroke="#cbd5e1" strokeWidth="1.4" />
+                          </g>
+                        )}
+                        {ghostKind === 'potentiometer' && (
+                          <g>
+                            <rect x="-24" y="-22" width="48" height="44" rx="6" fill="#0369a1" stroke="#0c4a6e" strokeWidth="1.4" />
+                            <circle cx="0" cy="0" r="15" fill="#e2e8f0" stroke="#64748b" strokeWidth="1.4" />
+                            <line x1="0" y1="0" x2="0" y2="-13" stroke="#0f172a" strokeWidth="2.8" strokeLinecap="round" />
+                          </g>
+                        )}
+                        {ghostKind === 'ldr' && (
+                          <g>
+                            <circle cx="0" cy="-2" r="18" fill="#fef3c7" stroke="#d97706" strokeWidth="2" />
+                            <path d="M -10 -7 Q 0 -12 10 -7 Q 0 -2 -10 3 Q 0 8 10 3" fill="none" stroke="#b45309" strokeWidth="2" />
+                          </g>
+                        )}
+                        {ghostKind === 'ultrasonic' && (
+                          <g>
+                            <rect x="-42" y="-22" width="84" height="40" rx="5" fill="#0d9488" stroke="#115e59" strokeWidth="1.4" />
+                            <circle cx="-21" cy="-2" r="13" fill="#cbd5e1" stroke="#475569" strokeWidth="1.6" />
+                            <circle cx="21" cy="-2" r="13" fill="#cbd5e1" stroke="#475569" strokeWidth="1.6" />
+                          </g>
+                        )}
+                        {ghostKind === 'servo' && (
+                          <g>
+                            <rect x="-32" y="-16" width="64" height="36" rx="4" fill="#1d4ed8" stroke="#1e3a8a" strokeWidth="1.4" />
+                            <circle cx="10" cy="2" r="12" fill="#e2e8f0" stroke="#64748b" strokeWidth="1.4" />
+                            <rect x="-4" y="-22" width="8" height="26" rx="4" fill="#f8fafc" stroke="#475569" strokeWidth="1.2" transform="translate(10, 2)" />
+                          </g>
+                        )}
+                        {ghostKind === 'buzzer' && (
+                          <g>
+                            <circle cx="0" cy="-2" r="19" fill="#1e293b" stroke="#64748b" strokeWidth="1.6" />
+                            <circle cx="0" cy="-2" r="6" fill="#0f172a" stroke="#94a3b8" strokeWidth="1.2" />
+                          </g>
+                        )}
+                        {ghostKind === 'temp-sensor' && (
+                          <g>
+                            <path d="M -16 6 L -16 -8 A 16 14 0 0 1 16 -8 L 16 6 Z" fill="#1e293b" stroke="#64748b" strokeWidth="1.4" />
+                          </g>
+                        )}
+                        {ghostKind === 'multimeter' && (
+                          <g>
+                            <rect x="-36" y="-34" width="72" height="58" rx="7" fill="#eab308" stroke="#a16207" strokeWidth="1.4" />
+                            <rect x="-32" y="-30" width="64" height="50" rx="4.5" fill="#0f172a" />
+                            <rect x="-28" y="-26" width="56" height="23" rx="2.5" fill="#a7f3d0" />
+                            <text x="0" y="-11" textAnchor="middle" fill="#064e3b" fontSize="9.5" fontWeight="800" fontFamily="monospace">
+                              0.00 V
+                            </text>
+                          </g>
+                        )}
+                      </g>
+
+                      {/* Preview Pin Alignment Dots */}
+                      {ghostPins.map((pin) => (
+                        <circle
+                          key={pin.id}
+                          cx={pin.dx}
+                          cy={pin.dy}
+                          r="3.2"
+                          fill="#22c6cf"
+                          stroke="#0f172a"
+                          strokeWidth="1"
+                        />
+                      ))}
+
+                      {/* Snapped Coordinate Pill */}
+                      <g transform="translate(0, -45)">
+                        <rect
+                          x="-64"
+                          y="-9"
+                          width="128"
+                          height="16"
+                          rx="4"
+                          fill="#0f172a"
+                          fillOpacity="0.92"
+                          stroke="#22c6cf"
+                          strokeWidth="0.9"
+                        />
+                        <text
+                          x="0"
+                          y="2"
+                          textAnchor="middle"
+                          fill="#f8fafc"
+                          fontSize="7.6"
+                          fontWeight="700"
+                          fontFamily="monospace"
+                        >
+                          {`${ghostKind.toUpperCase()} (${dropPreview.x},${dropPreview.y})`}
+                        </text>
+                      </g>
+                    </g>
+                  </g>
+                );
+              })()}
+            </g>
+          )}
         </svg>
 
-        {/* Quiet bottom hint bar + live hovered wire endpoint inspector */}
+        {/* Quiet bottom hint bar + live hovered wire / node endpoint inspector */}
         <div className="pointer-events-none absolute bottom-2 start-3 end-3 flex items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
-          <span className="truncate">{tLoc(translations.simulator.wiringHint, lang)}</span>
+          <span
+            className={cn(
+              'truncate',
+              wiringToolActive && 'text-[#00878F] dark:text-[#22c6cf] font-medium',
+            )}
+          >
+            {wiringToolActive
+              ? tLoc(translations.simulator.wiringToolActiveHint, lang)
+              : tLoc(translations.simulator.wiringHint, lang)}
+          </span>
+          {!hoveredWireId && hoverNodeId && (wiringToolActive || wireStart || dragWire) && (
+            <span className="shrink-0 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-slate-900/90 text-cyan-200 font-mono text-[10px] border border-[#00878F]/50 shadow-sm tabular-nums">
+              <span
+                className="w-2 h-2 rounded-full shrink-0"
+                style={{ backgroundColor: wireColor }}
+              />
+              <span>{formatNodeLabel(hoverNodeId)}</span>
+            </span>
+          )}
           {hoveredWireId && (() => {
             const wire = circuit.wires.find((w) => w.id === hoveredWireId);
             if (!wire) return null;
+            const wf = running && currentFlowEnabled ? currentFlowMap.wires[wire.id] : undefined;
+            const effDir = wf
+              ? flowMode === 'electrons'
+                ? (wf.direction === 1 ? -1 : 1)
+                : wf.direction
+              : 0;
             return (
-              <span className="shrink-0 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-slate-900/90 text-slate-100 font-mono text-[10px] border border-cyan-500/40 shadow-sm">
+              <span className="shrink-0 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-slate-900/90 text-slate-100 font-mono text-[10px] border border-cyan-500/40 shadow-sm tabular-nums">
                 <span
                   className="w-2 h-2 rounded-full shrink-0"
                   style={{ backgroundColor: wire.color }}
                 />
                 <span>{formatNodeLabel(wire.from)}</span>
-                <span className="text-cyan-400">⇄</span>
+                <span
+                  className={
+                    wf
+                      ? wf.category === 'overload'
+                        ? 'text-rose-400 font-bold'
+                        : flowMode === 'electrons'
+                          ? 'text-cyan-300 font-bold'
+                          : 'text-amber-300 font-bold'
+                      : 'text-cyan-400'
+                  }
+                >
+                  {effDir === 1 ? '→' : effDir === -1 ? '←' : '⇄'}
+                </span>
                 <span>{formatNodeLabel(wire.to)}</span>
+                {wf && (
+                  <span className="text-amber-300 font-semibold ps-1 border-s border-slate-700">
+                    {wf.currentMa} mA
+                  </span>
+                )}
               </span>
             );
           })()}
@@ -2221,6 +4211,110 @@ export function BreadboardCanvas({
                 >
                   {comp.label || 'Pushbutton'}: {comp.value === 1 ? 'PRESSED' : 'HOLD TO PRESS'}
                 </button>
+              );
+            }
+            if (comp.kind === 'multimeter') {
+              const mode = getMultimeterModeFromValue(comp.value);
+              const reading = multimeterReadings[comp.id];
+              const isFuse = reading?.warning === 'fuse-overload';
+              const isLiveWarn = reading?.warning === 'live-circuit';
+              const statusHint = isFuse
+                ? tLoc(translations.simulator.multimeterFuseWarn, lang)
+                : isLiveWarn
+                  ? tLoc(translations.simulator.multimeterLiveWarn, lang)
+                  : !reading?.connected
+                    ? tLoc(translations.simulator.multimeterProbesHint, lang)
+                    : reading.warning === 'idle'
+                      ? tLoc(translations.simulator.multimeterIdleHint, lang)
+                      : null;
+
+              return (
+                <div
+                  key={comp.id}
+                  className="flex flex-wrap items-center gap-2 text-xs rounded-lg border border-amber-500/35 bg-amber-500/5 dark:bg-amber-500/10 px-2.5 py-1.5"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <Gauge className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                    <span className="font-bold text-slate-800 dark:text-slate-100 whitespace-nowrap">
+                      {comp.label || 'DMM'}
+                    </span>
+                  </div>
+
+                  {/* Mode Selector Buttons */}
+                  <div className="inline-flex items-center rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-0.5">
+                    {(
+                      [
+                        { id: 'voltage' as const, short: 'V', title: translations.simulator.multimeterVoltage },
+                        { id: 'current' as const, short: 'mA', title: translations.simulator.multimeterCurrent },
+                        { id: 'resistance' as const, short: 'Ω', title: translations.simulator.multimeterResistance },
+                      ]
+                    ).map((m) => {
+                      const active = mode === m.id;
+                      return (
+                        <button
+                          key={m.id}
+                          type="button"
+                          aria-pressed={active}
+                          title={tLoc(m.title, lang)}
+                          onClick={() => {
+                            soundEngine.playSelect();
+                            updateComponentValue(comp.id, getMultimeterValueFromMode(m.id));
+                          }}
+                          className={cn(
+                            'px-2 py-0.5 rounded text-[11px] font-mono font-bold transition-colors whitespace-nowrap cursor-pointer',
+                            active
+                              ? 'bg-[#00878F] text-white'
+                              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white',
+                          )}
+                        >
+                          {m.short}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Crisp Tabular LCD Readout */}
+                  <span
+                    className={cn(
+                      'font-mono tabular-nums text-xs font-extrabold px-2 py-0.5 rounded border whitespace-nowrap',
+                      isFuse
+                        ? 'bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/40'
+                        : isLiveWarn
+                          ? 'bg-amber-500/20 text-amber-800 dark:text-amber-300 border-amber-500/45'
+                          : reading?.connected && reading.warning === 'none'
+                            ? 'bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 border-emerald-500/35'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-300 dark:border-slate-700',
+                    )}
+                  >
+                    {reading?.displayText ?? '0.00 V'}
+                  </span>
+
+                  {/* Probed Node Endpoints or Actionable Hint */}
+                  {reading?.posTarget && reading?.negTarget ? (
+                    <span className="font-mono text-[10.5px] text-slate-600 dark:text-slate-300 flex items-center gap-1 whitespace-nowrap">
+                      <span className="text-rose-600 dark:text-rose-400 font-bold">+</span>
+                      <span>{formatNodeLabel(reading.posTarget)}</span>
+                      <span className="opacity-50">↔</span>
+                      <span className="text-slate-500 dark:text-slate-400 font-bold">−</span>
+                      <span>{formatNodeLabel(reading.negTarget)}</span>
+                    </span>
+                  ) : null}
+
+                  {statusHint && (
+                    <span
+                      className={cn(
+                        'text-[11px] font-medium',
+                        isFuse
+                          ? 'text-rose-600 dark:text-rose-400'
+                          : isLiveWarn
+                            ? 'text-amber-700 dark:text-amber-300'
+                            : 'text-slate-500 dark:text-slate-400',
+                      )}
+                    >
+                      {statusHint}
+                    </span>
+                  )}
+                </div>
               );
             }
             const cfg =
@@ -2264,8 +4358,21 @@ export function BreadboardCanvas({
               <button
                 key={item.kind}
                 type="button"
+                draggable
+                title={tLoc(translations.simulator.dragPartTooltip, lang)}
+                onDragStart={(e) => {
+                  setPaletteDragKind(item.kind);
+                  e.dataTransfer.setData(ARDUNOLAB_COMPONENT_MIME, item.kind);
+                  e.dataTransfer.setData('text/plain', item.kind);
+                  e.dataTransfer.effectAllowed = 'copy';
+                  soundEngine.playSelect();
+                }}
+                onDragEnd={() => {
+                  setPaletteDragKind(null);
+                  setDropPreview(null);
+                }}
                 onClick={() => handleAddComponent(item.kind)}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-medium text-slate-700 dark:text-slate-200 hover:border-[#00878F] hover:text-[#00878F] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-medium text-slate-700 dark:text-slate-200 hover:border-[#00878F] hover:text-[#00878F] transition-colors whitespace-nowrap shrink-0 cursor-grab active:cursor-grabbing"
               >
                 <span
                   className="w-2.5 h-2.5 rounded-full shrink-0"
@@ -2277,6 +4384,22 @@ export function BreadboardCanvas({
             ))}
           </div>
         </div>
+      )}
+
+      {/* Smart Context-Aware Hover Tooltip (Portal-rendered so it never clips) */}
+      {smartTooltipsEnabled && (
+        <SmartComponentTooltip
+          lang={lang}
+          target={tooltipTarget}
+          circuit={circuit}
+          componentPower={componentPower}
+          pinValues={pinValues}
+          servoAngles={servoAngles}
+          buzzerTone={buzzerTone}
+          running={running}
+          ledD13On={ledD13On}
+          multimeterReadings={multimeterReadings}
+        />
       )}
     </div>
   );
