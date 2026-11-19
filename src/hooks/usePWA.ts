@@ -1,0 +1,154 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { registerSW } from 'virtual:pwa-register';
+
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
+}
+
+export function useOnlineStatus(): boolean {
+  const [isOnline, setIsOnline] = useState<boolean>(
+    typeof navigator !== 'undefined' ? navigator.onLine : true,
+  );
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  return isOnline;
+}
+
+export function usePWAInstall() {
+  const [deferredPrompt, setDeferredPrompt] =
+    useState<BeforeInstallPromptEvent | null>(null);
+  const [isInstalled, setIsInstalled] = useState(false);
+  const [isIOS, setIsIOS] = useState(false);
+
+  useEffect(() => {
+    const isStandalone =
+      window.matchMedia('(display-mode: standalone)').matches ||
+      (window.navigator as unknown as { standalone?: boolean }).standalone ===
+        true;
+    setIsInstalled(isStandalone);
+
+    const userAgent = window.navigator.userAgent.toLowerCase();
+    setIsIOS(/iphone|ipad|ipod/.test(userAgent));
+
+    const handleBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e as BeforeInstallPromptEvent);
+    };
+
+    const handleAppInstalled = () => {
+      setIsInstalled(true);
+      setDeferredPrompt(null);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    window.addEventListener('appinstalled', handleAppInstalled);
+
+    return () => {
+      window.removeEventListener(
+        'beforeinstallprompt',
+        handleBeforeInstallPrompt,
+      );
+      window.removeEventListener('appinstalled', handleAppInstalled);
+    };
+  }, []);
+
+  const install = useCallback(async () => {
+    if (!deferredPrompt) return false;
+    await deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') {
+      setIsInstalled(true);
+      setDeferredPrompt(null);
+      return true;
+    }
+    return false;
+  }, [deferredPrompt]);
+
+  return {
+    isInstallable: Boolean(deferredPrompt),
+    isInstalled,
+    isIOS,
+    install,
+  };
+}
+
+export function useServiceWorkerState() {
+  const [offlineReady, setOfflineReady] = useState(false);
+  const [needRefresh, setNeedRefresh] = useState(false);
+  const [swActive, setSwActive] = useState(false);
+  const updateFnRef = useRef<((reloadPage?: boolean) => Promise<void>) | null>(
+    null,
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('serviceWorker' in navigator)) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const updateSW = registerSW({
+      immediate: true,
+      onRegisteredSW(_swUrl, registration) {
+        if (!cancelled && registration) {
+          setSwActive(true);
+        }
+      },
+      onOfflineReady() {
+        if (!cancelled) {
+          setOfflineReady(true);
+          setSwActive(true);
+        }
+      },
+      onNeedRefresh() {
+        if (!cancelled) {
+          setNeedRefresh(true);
+        }
+      },
+    });
+
+    updateFnRef.current = updateSW;
+
+    if (navigator.serviceWorker.controller) {
+      setSwActive(true);
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const applyUpdate = useCallback(() => {
+    updateFnRef.current?.(true);
+  }, []);
+
+  const dismissOfflineReady = useCallback(() => {
+    setOfflineReady(false);
+  }, []);
+
+  const dismissRefresh = useCallback(() => {
+    setNeedRefresh(false);
+  }, []);
+
+  return {
+    offlineReady,
+    needRefresh,
+    swActive,
+    applyUpdate,
+    dismissOfflineReady,
+    dismissRefresh,
+  };
+}

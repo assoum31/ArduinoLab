@@ -1,0 +1,6 @@
+{
+  "name": "ArdunoLab",
+  "description": "Interactive 3D Arduino Learning & Circuit Simulation Platform with dual Blockly + C++ editor, breadboard wiring simulator, 11-lesson curriculum, and gamified challenge arena.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

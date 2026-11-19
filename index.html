@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#00878F" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="ArdunoLab" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem('ardunolab_theme');
+          var prefersDark =
+            window.matchMedia &&
+            window.matchMedia('(prefers-color-scheme: dark)').matches;
+          var resolved =
+            saved === 'light' || saved === 'dark'
+              ? saved
+              : prefersDark
+                ? 'dark'
+                : 'light';
+          document.documentElement.classList.toggle('dark', resolved === 'dark');
+          document.documentElement.style.colorScheme = resolved;
+        } catch (e) {}
+      })();
+    </script>
+    <title>ArdunoLab — أردوينولاب | Interactive Arduino 3D &amp; Circuit Simulator</title>
+    <meta
+      name="description"
+      content="Interactive 3D Arduino Learning &amp; Circuit Simulation Platform with dual Blockly + C++ editor, breadboard wiring simulator, 11-lesson curriculum, and gamified challenge arena."
+    />
+    <meta property="og:title" content="ArdunoLab — أردوينولاب" />
+    <meta
+      property="og:description"
+      content="Learn Arduino electronics and embedded C++ from scratch with an interactive 3D Uno R3 board, breadboard simulator, Blockly + C++ editor, and challenges."
+    />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body class="bg-slate-50 text-slate-900 dark:bg-[#0B1120] dark:text-slate-100 antialiased selection:bg-[#00878F]/30 selection:text-[#00878F]">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
