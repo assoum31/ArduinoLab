@@ -184,6 +184,51 @@ export const translations = {
       en: 'Cancel Wire',
       fr: 'Annuler fil',
     },
+    wireColorCustom: {
+      ar: 'لون مخصص',
+      en: 'Custom Color',
+      fr: 'Couleur personnalisée',
+    },
+    wireColorAutoByPin: {
+      ar: 'تلوين تلقائي حسب المنفذ',
+      en: 'Auto-color by pin role',
+      fr: 'Couleur auto par broche',
+    },
+    wireColorAutoByPinDesc: {
+      ar: 'أحمر لـ 5V، أسود لـ GND، أزرق للتماثلي، أصفر لـ PWM',
+      en: 'Red for 5V, Black for GND, Blue for Analog, Yellow for PWM',
+      fr: 'Rouge 5V, Noir GND, Bleu Analogique, Jaune PWM',
+    },
+    wireColorDebugFilter: {
+      ar: 'تمييز الأسلاك حسب اللون (تتبع الدارة)',
+      en: 'Debug Focus by Wire Color',
+      fr: 'Isoler les fils par couleur',
+    },
+    wireColorShowAll: {
+      ar: 'عرض الكل',
+      en: 'Show all',
+      fr: 'Tout afficher',
+    },
+    wireSelectedRecolor: {
+      ar: 'تغيير اللون',
+      en: 'Recolor',
+      fr: 'Recolorer',
+    },
+    wireDeleteSelected: {
+      ar: 'حذف السلك',
+      en: 'Delete Wire',
+      fr: 'Supprimer fil',
+    },
+    wireColorHotkeyHint: {
+      ar: '1–9 لتبديل اللون · انقر على أي سلك لتغيير لونه أو حذفه',
+      en: 'Keys 1–9 switch color · Click any wire to recolor or delete',
+      fr: 'Touches 1–9 : couleur · Cliquez un fil pour le recolorer ou supprimer',
+    },
+    wireColorPaletteTooltip: {
+      ar: 'اختيار لون سلك التوصيل وتصفية ألوان الدارة لتسهيل التتبع (1–9)',
+      en: 'Choose jumper wire color & isolate wire colors for circuit debugging (1–9)',
+      fr: 'Choisir la couleur des fils et filtrer par couleur pour déboguer (1–9)',
+    },
     zoomIn: { ar: 'تكبير', en: 'Zoom In', fr: 'Zoom +' },
     zoomOut: { ar: 'تصغير', en: 'Zoom Out', fr: 'Zoom -' },
     resetZoom: { ar: 'إعادة ضبط التكبير', en: 'Reset View', fr: 'Réinitialiser vue' },
